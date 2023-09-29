@@ -11,50 +11,6 @@ use std::io;
 use std::collections::VecDeque;
 use struct_iterable::Iterable;
 
-pub struct MonitorApp {
-    include_y: Vec<f64>,
-    measurements: Arc<Mutex<MeasurementWindow>>,
-}
-
-impl MonitorApp {
-    fn new(look_behind: usize) -> Self {
-        Self {
-            measurements: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(
-                look_behind,
-            ))),
-            include_y: Vec::new(),
-        }
-    }
-}
-
-impl eframe::App for MonitorApp {
-    /// Called by the frame work to save state before shutdown.
-    /// Note that you must enable the `persistence` feature for this to work.
-    #[cfg(feature = "persistence")]
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self);
-    }
-
-    /// Called each time the UI needs repainting, which may be many times per second.
-    /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let mut plot = egui::plot::Plot::new("measurements");
-            for y in self.include_y.iter() {
-                plot = plot.include_y(*y);
-            }
-
-            plot.show(ui, |plot_ui| {
-                plot_ui.line(egui::plot::Line::new(
-                    self.measurements.lock().unwrap().plot_values(),
-                ));
-            });
-        });
-        // make it always repaint. TODO: can we slow down here?
-        ctx.request_repaint();
-    }
-}
-
 struct Parser{}
 
 impl Parser {
@@ -74,7 +30,7 @@ impl Parser {
     }
 }
 
-fn serial_listener(blackboard: &Blackboard)
+fn serial_listener(blackboard: &Blackboard, monitor_ref: Arc<Mutex<MeasurementWindow>>)
 {
     let delay_between_rereads = 10;
     println!("Serial port:");
@@ -89,6 +45,7 @@ fn serial_listener(blackboard: &Blackboard)
     .open().expect("Failed to open port");
 
     let mut incoming_stream: VecDeque<u8> = VecDeque::with_capacity(256);
+    let mut ctr = 0;
     loop {
         // serial_buf may contain less or more than one whole msg (i.e. chars delimited by \n)
         let delimiter = b'\n'; // Change this to the delimiter character(s) you're using
@@ -127,8 +84,10 @@ fn serial_listener(blackboard: &Blackboard)
                     if header == blackboard.bus_voltage.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            let mut queue = blackboard.bus_voltage.1.lock().unwrap();
-                            queue.push_back(f);
+                            // let mut queue = blackboard.bus_voltage.1.lock().unwrap();
+                            // queue.push_back(f);
+                            monitor_ref.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
+                            ctr = ctr + 1;
                         }
                     }
                     if header == blackboard.dbg_msg.0 {
@@ -153,14 +112,64 @@ struct Blackboard
     dbg_msg: BlackboardRow<String>,
 }
 
+pub struct MonitorApp {
+    include_y: Vec<f64>,
+    measurements: Arc<Mutex<MeasurementWindow>>,
+}
+
+impl MonitorApp {
+    fn new(look_behind: usize) -> Self {
+        Self {
+            measurements: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(
+                look_behind,
+            ))),
+            include_y: Vec::new(),
+        }
+    }
+}
+
+impl eframe::App for MonitorApp {
+    /// Called by the frame work to save state before shutdown.
+    /// Note that you must enable the `persistence` feature for this to work.
+    #[cfg(feature = "persistence")]
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, eframe::APP_KEY, self);
+    }
+
+    /// Called each time the UI needs repainting, which may be many times per second.
+    /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // println!("here.");
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let mut plot = egui::plot::Plot::new("measurements");
+            for y in self.include_y.iter() {
+                plot = plot.include_y(*y);
+            }
+
+            plot.show(ui, |plot_ui| {
+                plot_ui.line(egui::plot::Line::new(
+                    self.measurements.lock().unwrap().plot_values(),
+                ));
+            });
+        });
+        // make it always repaint. TODO: can we slow down here?
+        ctx.request_repaint();
+    }
+}
+
 fn main() {
     let bus_voltage_queue = Arc::new(Mutex::new(VecDeque::<f32>::new()));
     let dbg_msg_queue = Arc::new(Mutex::new(VecDeque::<String>::new()));
 
-
     let bus_voltage_queue_thread = bus_voltage_queue.clone();
     let dbg_msg_queue_thread = dbg_msg_queue.clone();
 
+    let mut app = MonitorApp::new(1000);
+    app.include_y.push(-5.0);
+    app.include_y.push(0.0);
+    app.include_y.push(5.0);
+
+    let monitor_ref = app.measurements.clone();
     
     let _handle = thread::spawn({
         move || {
@@ -171,31 +180,31 @@ fn main() {
             };
 
             // Inf loop, does not return
-            serial_listener(&blackboard);
+            serial_listener(&blackboard, monitor_ref);
         }
     });
 
-    println!("In main");
-    let mut ctr = 0;
-    loop{
-        let mut bus_voltage_lock = bus_voltage_queue.try_lock();
-        if let Ok(ref mut queue) = bus_voltage_lock{
-            if let Some(m) = queue.pop_front(){
-                println!("Message from bus_voltage_queue #{}: {:.3}", ctr, m);
-                ctr = ctr+1;
-            }
-        }
-
-        let mut dbg_msg_lock = bus_voltage_queue.try_lock();
-        if let Ok(ref mut queue) = dbg_msg_lock{
-            if let Some(m) = queue.pop_front(){
-                println!("Message from dbg_msg_lock_queue: {}", m);
-            }
-        }
-
-        thread::sleep(Duration::from_millis(100));
-    }
-    let app = MonitorApp::new(1000);
     let native_options = eframe::NativeOptions::default();
     eframe::run_native("Monitor app", native_options, Box::new(|_| Box::new(app)));
+
+    // println!("In main");
+    // let mut ctr = 0;
+    // loop{
+    //     let mut bus_voltage_lock = bus_voltage_queue.try_lock();
+    //     if let Ok(ref mut queue) = bus_voltage_lock{
+    //         if let Some(m) = queue.pop_front(){
+    //             println!("Message from bus_voltage_queue #{}: {:.3}", ctr, m);
+    //             ctr = ctr+1;
+    //         }
+    //     }
+
+    //     let mut dbg_msg_lock = bus_voltage_queue.try_lock();
+    //     if let Ok(ref mut queue) = dbg_msg_lock{
+    //         if let Some(m) = queue.pop_front(){
+    //             println!("Message from dbg_msg_lock_queue: {}", m);
+    //         }
+    //     }
+
+    //     thread::sleep(Duration::from_millis(100));
+    // }
 }

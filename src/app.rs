@@ -125,6 +125,7 @@ fn main() {
         }
     });
 
+    // time.sleep(std::time::Duration::from_millis(500));
     info!("Main thread started");
     eframe::run_native("Monitor app", native_options, Box::new(|_| Box::new(app)));
 }
