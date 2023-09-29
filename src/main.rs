@@ -3,15 +3,12 @@ mod measurements;
 use crate::measurements::MeasurementWindow;
 use eframe::egui;
 
-use std::io::BufRead;
+use std::num::ParseFloatError;
 use std::sync::*;
 use std::thread;
-use tracing::{error, info, warn};
 use std::time::Duration;
 use std::io;
 use std::collections::VecDeque;
-use std::fmt;
-use std::any::type_name;
 use struct_iterable::Iterable;
 
 pub struct MonitorApp {
@@ -61,9 +58,10 @@ impl eframe::App for MonitorApp {
 struct Parser{}
 
 impl Parser {
-    fn parse_float(buffer: &[u8]) -> f32 {
-        let string = std::str::from_utf8(buffer).unwrap();
-        string.trim().parse().unwrap()
+    fn parse_float(buffer: &[u8]) -> Result<f32, ParseFloatError>
+    {
+        // f32::from_str(buffer)
+        std::str::from_utf8(buffer).unwrap().trim().parse::<f32>()
     }
 
     fn parse_int(buffer: &[u8]) -> i32 {
@@ -78,6 +76,7 @@ impl Parser {
 
 fn serial_listener(blackboard: &Blackboard)
 {
+    let delay_between_rereads = 10;
     println!("Serial port:");
     let ports = serialport::available_ports().expect("No ports found!");
     for p in &ports {
@@ -102,7 +101,9 @@ fn serial_listener(blackboard: &Blackboard)
                 // println!("DBG: Bits read: {}", bits_read);
                 incoming_stream.extend(&read_buf[..bits_read]);
             },
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (
+                thread::sleep(Duration::from_millis(delay_between_rereads))
+            ),
             Err(_e) => {},
         }
         // Process queue to see if there are any complete messages (end with \n)
@@ -118,9 +119,17 @@ fn serial_listener(blackboard: &Blackboard)
                     let header = message[..index_header_end].into_iter().collect::<String>();
                     let data = message[index_header_end+1..].into_iter().map(|c| *c as u8).into_iter().collect::<Vec<u8>>();
 
+                    // println!("Header: {}", header);
+                    // println!("msg: {:?}", message);
+                    // println!("data: {:?}", data);
+                    // println!("index_header_end: {:?}", index_header_end);
+
                     if header == blackboard.bus_voltage.0 {
-                        let mut queue = blackboard.bus_voltage.1.lock().unwrap();
-                        queue.push_back(Parser::parse_float(&data));
+                        if let Ok(f) = Parser::parse_float(&data)
+                        {
+                            let mut queue = blackboard.bus_voltage.1.lock().unwrap();
+                            queue.push_back(f);
+                        }
                     }
                     if header == blackboard.dbg_msg.0 {
                         let mut queue = blackboard.dbg_msg.1.lock().unwrap();
@@ -167,11 +176,13 @@ fn main() {
     });
 
     println!("In main");
+    let mut ctr = 0;
     loop{
         let mut bus_voltage_lock = bus_voltage_queue.try_lock();
         if let Ok(ref mut queue) = bus_voltage_lock{
             if let Some(m) = queue.pop_front(){
-                println!("Message from bus_voltage_queue: {}", m);
+                println!("Message from bus_voltage_queue #{}: {:.3}", ctr, m);
+                ctr = ctr+1;
             }
         }
 
