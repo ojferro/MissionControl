@@ -11,6 +11,8 @@ use std::time::Duration;
 use std::io;
 use std::collections::VecDeque;
 use std::fmt;
+use std::any::type_name;
+use struct_iterable::Iterable;
 
 pub struct MonitorApp {
     include_y: Vec<f64>,
@@ -56,71 +58,25 @@ impl eframe::App for MonitorApp {
     }
 }
 
-#[derive(Debug)]
-enum MessageDType {
-    Float,
-    Int,
-    String,
-}
-impl fmt::Display for MessageDType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self{
-            MessageDType::Float => "Float",
-            MessageDType::Int => "Int",
-            MessageDType::String => "String",
-        })
+struct Parser{}
+
+impl Parser {
+    fn parse_float(buffer: &[u8]) -> f32 {
+        let string = std::str::from_utf8(buffer).unwrap();
+        string.trim().parse().unwrap()
+    }
+
+    fn parse_int(buffer: &[u8]) -> i32 {
+        let string = std::str::from_utf8(buffer).unwrap();
+        string.trim().parse().unwrap()
+    }
+
+    fn parse_string(buffer: &[u8]) -> String {
+        String::from_utf8_lossy(buffer).to_string()
     }
 }
 
-#[derive(Debug)]
-struct Message{
-    header: String,
-    dtype: MessageDType,
-    data: Vec<u8>,
-}
-
-impl Message{
-    fn new() -> Self {
-        Message{
-            header: "".to_string(),
-            dtype: MessageDType::String,
-            data: Vec::new(),
-        }
-    }
-    fn dtype(d: char) -> MessageDType {
-        match d {
-            'f' => MessageDType::Float,
-            'i' => MessageDType::Int,
-            's' => MessageDType::String,
-            _ => MessageDType::String,
-        }
-    }
-    fn parse_float(chars: &[char]) -> Option<f32> {
-        let s: String = chars.iter().collect();
-        s.parse().ok()
-    }
-    
-    fn parse_int(chars: &[char]) -> Option<i32> {
-        let s: String = chars.iter().collect();
-        s.parse().ok()
-    }
-    
-    fn parse_string(chars: &[char]) -> String {
-        chars.iter().collect()
-    }
-}
-
-impl fmt::Display for Message {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} : {} : {:?}", self.header, self.dtype, self.data)
-    }
-}
-struct MessageQueue {
-    incoming_stream: Arc<Mutex<VecDeque<Message>>>,
-}
-
-
-fn serial_listener(message_queue: Arc<Mutex<VecDeque<Message>>>)
+fn serial_listener(blackboard: &Blackboard)
 {
     println!("Serial port:");
     let ports = serialport::available_ports().expect("No ports found!");
@@ -156,18 +112,21 @@ fn serial_listener(message_queue: Arc<Mutex<VecDeque<Message>>>)
         if read_buf.contains(&delimiter)
         {
             while let Some(index_end) = incoming_stream.iter().position(|&c| c == delimiter) {
-                let mut message = incoming_stream.drain(..index_end + 1).map(|c| c as char).into_iter().collect::<Vec<char>>();//collect::<Vec<u8>>();
+                let message = incoming_stream.drain(..index_end + 1).map(|c| c as char).into_iter().collect::<Vec<char>>();//collect::<Vec<u8>>();
 
-                // while let Some(index_header_end) = message.iter().position(|&c| c == delimiter_header) {
                 if let Some(index_header_end) = message.iter().position(|&c| c == delimiter_header){
-                    let header = message[..index_header_end + 1].into_iter().collect::<String>();
-                    let dtype = message[index_header_end+1];
+                    let header = message[..index_header_end].into_iter().collect::<String>();
                     let data = message[index_header_end+1..].into_iter().map(|c| *c as u8).into_iter().collect::<Vec<u8>>();
-                    let m = Message{header: header, dtype: Message::dtype(dtype), data: data};
-                    {
-                        let mut queue = message_queue.lock().unwrap();
-                        queue.push_back(m);
+
+                    if header == blackboard.bus_voltage.0 {
+                        let mut queue = blackboard.bus_voltage.1.lock().unwrap();
+                        queue.push_back(Parser::parse_float(&data));
                     }
+                    if header == blackboard.dbg_msg.0 {
+                        let mut queue = blackboard.dbg_msg.1.lock().unwrap();
+                        queue.push_back(Parser::parse_string(&data));
+                    }
+                    
                 } else {
                     println!("ERROR: No header found");
                 }
@@ -176,29 +135,56 @@ fn serial_listener(message_queue: Arc<Mutex<VecDeque<Message>>>)
     }
 }
 
+type BlackboardRow<T> = (String, Arc<Mutex<VecDeque<T>>>);
+
+#[derive(Iterable)]
+struct Blackboard
+{
+    bus_voltage: BlackboardRow<f32>,
+    dbg_msg: BlackboardRow<String>,
+}
 
 fn main() {
+    let bus_voltage_queue = Arc::new(Mutex::new(VecDeque::<f32>::new()));
+    let dbg_msg_queue = Arc::new(Mutex::new(VecDeque::<String>::new()));
 
-    let message_queue = Arc::new(Mutex::new(VecDeque::new()));
 
-    let handle = thread::spawn({
-        let message_queue = message_queue.clone();
+    let bus_voltage_queue_thread = bus_voltage_queue.clone();
+    let dbg_msg_queue_thread = dbg_msg_queue.clone();
+
+    
+    let _handle = thread::spawn({
         move || {
+
+            let blackboard = Blackboard{
+                bus_voltage: (String::from("bus_voltage"), bus_voltage_queue_thread),
+                dbg_msg: (String::from("dbg_msg"), dbg_msg_queue_thread),
+            };
+
             // Inf loop, does not return
-            serial_listener(message_queue);
+            serial_listener(&blackboard);
         }
     });
 
     println!("In main");
     loop{
-        match message_queue.lock().unwrap().pop_front() {
-            Some(m) => println!("Message from main: {}", m),
-            None => continue,
-        };
+        let mut bus_voltage_lock = bus_voltage_queue.try_lock();
+        if let Ok(ref mut queue) = bus_voltage_lock{
+            if let Some(m) = queue.pop_front(){
+                println!("Message from bus_voltage_queue: {}", m);
+            }
+        }
+
+        let mut dbg_msg_lock = bus_voltage_queue.try_lock();
+        if let Ok(ref mut queue) = dbg_msg_lock{
+            if let Some(m) = queue.pop_front(){
+                println!("Message from dbg_msg_lock_queue: {}", m);
+            }
+        }
 
         thread::sleep(Duration::from_millis(100));
     }
-    // let app = MonitorApp::new(1000);
-    // let native_options = eframe::NativeOptions::default();
-    // eframe::run_native("Monitor app", native_options, Box::new(|_| Box::new(app)));
+    let app = MonitorApp::new(1000);
+    let native_options = eframe::NativeOptions::default();
+    eframe::run_native("Monitor app", native_options, Box::new(|_| Box::new(app)));
 }
