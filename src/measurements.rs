@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-pub type Measurement = egui::plot::PlotPoint;
+pub type Measurement = egui_plot::PlotPoint;
 
 pub struct MeasurementWindow {
     pub values: VecDeque<Measurement>,
@@ -33,7 +33,7 @@ impl MeasurementWindow {
         }
     }
 
-    pub fn plot_values(&self) -> egui::plot::PlotPoints {
-        egui::plot::PlotPoints::Owned(Vec::from_iter(self.values.iter().copied()))
+    pub fn plot_values(&self) -> egui_plot::PlotPoints {
+        egui_plot::PlotPoints::Owned(Vec::from_iter(self.values.iter().copied()))
     }
 }

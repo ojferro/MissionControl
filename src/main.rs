@@ -1,8 +1,11 @@
 mod measurements;
 
 use crate::measurements::MeasurementWindow;
+use eframe::Theme;
 use eframe::egui;
 use egui::Align2;
+use egui_plot::{Legend, Line, Plot};
+use eframe::egui::{Style, Visuals};
 
 use std::num::ParseFloatError;
 use std::sync::*;
@@ -120,10 +123,77 @@ struct Blackboard
     // dbg_msg: BlackboardRow<String>,
 }
 
+pub struct EncoderPositionsPlot
+{
+    show_axis0: bool,
+    show_axis1: bool,
+    show_axis2: bool,
+    show_axis3: bool,
+}
+
+impl Default for EncoderPositionsPlot
+{
+    fn default() -> Self
+    {
+        Self
+        {
+            show_axis0: true,
+            show_axis1: true,
+            show_axis2: true,
+            show_axis3: true,
+        }
+    }
+}
+
+pub struct EncoderVelocitiesPlot
+{
+    show_axis0: bool,
+    show_axis1: bool,
+    show_axis2: bool,
+    show_axis3: bool,
+}
+
+impl Default for EncoderVelocitiesPlot
+{
+    fn default() -> Self
+    {
+        Self
+        {
+            show_axis0: true,
+            show_axis1: true,
+            show_axis2: true,
+            show_axis3: true,
+        }
+    }
+}
+
+pub struct AppState
+{
+    com_port: String,
+    encoder_positions: EncoderPositionsPlot,
+    encoder_velocities: EncoderVelocitiesPlot,
+}
+
+impl AppState
+{
+    pub fn new() -> Self
+    {
+        Self
+        {
+            com_port: String::from("#"),
+            encoder_positions: EncoderPositionsPlot::default(),
+            encoder_velocities: EncoderVelocitiesPlot::default(),
+        }
+    }
+}
+
 pub struct MonitorApp {
     include_y: Vec<f64>,
     bus_voltage: Arc<Mutex<MeasurementWindow>>,
     encoder_position: Arc<Mutex<MeasurementWindow>>,
+
+
+    app_state: AppState,
 }
 
 impl MonitorApp {
@@ -136,6 +206,7 @@ impl MonitorApp {
                 look_behind,
             ))),
             include_y: Vec::new(),
+            app_state: AppState::new(),
         }
     }
 }
@@ -153,51 +224,82 @@ impl eframe::App for MonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // println!("here.");
         // egui::CentralPanel::default();
-        egui::Window::new("Bus Voltage")
-        .default_width(500.0)
-        .default_height(200.0)
-        .show(ctx, |ui| {
-            let mut plot = egui::plot::Plot::new("bus_voltage");
-            for y in self.include_y.iter() {
-                plot = plot.include_y(*y);
-            }
 
-            plot.show(ui, |plot_ui| {
-                plot_ui.line(egui::plot::Line::new(
-                    self.bus_voltage.lock().unwrap().plot_values(),
-                ));
+        let plot_height = 250.0;
+        let plot_wigth = 500.0;
+        let padding = 40.0;
+
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            ui.heading("Mission Control");
+
+            ui.horizontal(|ui| {
+                ui.label(format!("Serial port: COM{}", self.app_state.com_port));
             });
         });
 
-        egui::Window::new("Encoder Position")
-        .default_width(500.0)
-        .default_height(200.0)
-        .show(ctx, |ui| {
-            let mut plot = egui::plot::Plot::new("encoder_position");
-            for y in self.include_y.iter() {
-                plot = plot.include_y(*y);
-            }
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // The central panel the region left after adding TopPanel's and SidePanel's
 
-            plot.show(ui, |plot_ui| {
-                plot_ui.line(egui::plot::Line::new(
-                    self.encoder_position.lock().unwrap().plot_values(),
-                ).color(egui::epaint::Color32::from_rgb(244,184,96)));
+            egui::Window::new("Bus Voltage")
+            .default_width(plot_wigth)
+            .default_height(plot_height)
+            .collapsible(false)
+            .anchor(Align2::LEFT_TOP, [0.0,0.0])
+            .show(ctx, |ui: &mut egui::Ui| {
+                let mut plot = Plot::new("bus_voltage").legend(Legend::default());
+                    for y in self.include_y.iter() {
+                        plot = plot.include_y(*y);
+                    }
+
+                plot.show(ui, |plot_ui| {
+                    plot_ui.line(Line::new(
+                        self.bus_voltage.lock().unwrap().plot_values(),
+                    ));
+                });
+                
             });
-        });//anchor(Align2::LEFT_TOP);
-        // make it always repaint. TODO: can we slow down here?
+
+            egui::Window::new("Encoder Position")
+            .default_width(plot_wigth)
+            .default_height(plot_height)
+            .collapsible(false)
+            .drag_to_scroll(false)
+            .anchor(Align2::LEFT_TOP, [0.0,plot_height+padding])
+            .show(ctx, |ui| {
+
+                // Checkboxes to select which axes get plotted 
+                ui.horizontal(|ui| {
+
+                    ui.checkbox(&mut self.app_state.encoder_positions.show_axis0, "Show Axis 0")
+                        .on_hover_text("Uncheck to hide all the widgets.");
+
+                    // egui::reset_button(ui, self);
+
+                });
+                ui.separator();
+
+                // Encoder positions plots
+                let mut plot = Plot::new("encoder_position");
+                for y in self.include_y.iter() {
+                    plot = plot.include_y(*y);
+                }
+
+                plot.show(ui, |plot_ui| {
+                    if self.app_state.encoder_positions.show_axis0{
+                        plot_ui.line(Line::new(
+                            self.encoder_position.lock().unwrap().plot_values(),
+                        ));
+                    }
+                });
+            });
+        });
+
         ctx.request_repaint();
     }
 }
 
 fn main() {
-    // let bus_voltage_queue = Arc::new(Mutex::new(VecDeque::<f32>::new()));
-    // let dbg_msg_queue = Arc::new(Mutex::new(VecDeque::<String>::new()));
-
-    // let bus_voltage_queue_thread = bus_voltage_queue.clone();
-    // let dbg_msg_queue_thread = dbg_msg_queue.clone();
-
-    let mut app = MonitorApp::new(1000);
-    // app.include_y.push(-5.0);
+    let mut app = MonitorApp::new(500);
     app.include_y.push(0.0);
     app.include_y.push(5.0);
 
@@ -210,8 +312,6 @@ fn main() {
             let blackboard = Blackboard{
                 bus_voltage: (String::from("bus_voltage"), bus_voltage_thread),
                 encoder_position: (String::from("bus_voltage"), encoder_position_thread),
-                // bus_voltage: (String::from("encoder_position"), encoder_position_thread),
-                // dbg_msg: (String::from("dbg_msg"), dbg_msg_queue_thread),
             };
 
             // Inf loop, does not return
@@ -221,8 +321,17 @@ fn main() {
 
     let mut native_options = eframe::NativeOptions::default();
     native_options.maximized = true;
+    native_options.decorated = false;
+    native_options.default_theme = Theme::Dark;
     
-    eframe::run_native("Monitor app", native_options, Box::new(|_| Box::new(app)));
+    let _ = eframe::run_native("Monitor app", native_options, Box::new(
+        |creation_context| {
+            let style = Style {
+                visuals: Visuals::dark(),
+                ..Style::default()
+            };
+        creation_context.egui_ctx.set_style(style);
+        Box::new(app)}));
 
     // println!("In main");
     // let mut ctr = 0;
