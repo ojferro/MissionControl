@@ -2,6 +2,7 @@ mod measurements;
 
 use crate::measurements::MeasurementWindow;
 use eframe::egui;
+use egui::Align2;
 
 use std::num::ParseFloatError;
 use std::sync::*;
@@ -30,7 +31,7 @@ impl Parser {
     }
 }
 
-fn serial_listener(blackboard: &Blackboard, monitor_ref: Arc<Mutex<MeasurementWindow>>)
+fn serial_listener(blackboard: &Blackboard)
 {
     let delay_between_rereads = 10;
     println!("Serial port:");
@@ -76,24 +77,29 @@ fn serial_listener(blackboard: &Blackboard, monitor_ref: Arc<Mutex<MeasurementWi
                     let header = message[..index_header_end].into_iter().collect::<String>();
                     let data = message[index_header_end+1..].into_iter().map(|c| *c as u8).into_iter().collect::<Vec<u8>>();
 
-                    // println!("Header: {}", header);
-                    // println!("msg: {:?}", message);
-                    // println!("data: {:?}", data);
-                    // println!("index_header_end: {:?}", index_header_end);
-
                     if header == blackboard.bus_voltage.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
                             // let mut queue = blackboard.bus_voltage.1.lock().unwrap();
                             // queue.push_back(f);
-                            monitor_ref.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
+                            blackboard.bus_voltage.1.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
-                    if header == blackboard.dbg_msg.0 {
-                        let mut queue = blackboard.dbg_msg.1.lock().unwrap();
-                        queue.push_back(Parser::parse_string(&data));
+                    if header == blackboard.encoder_position.0 {
+                        if let Ok(f) = Parser::parse_float(&data)
+                        {
+                            // let mut queue = blackboard.bus_voltage.1.lock().unwrap();
+                            // queue.push_back(f);
+                            blackboard.encoder_position.1.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
+                            ctr = ctr + 1;
+                        }
                     }
+                    
+                    // if header == blackboard.dbg_msg.0 {
+                    //     let mut queue = blackboard.dbg_msg.1.lock().unwrap();
+                    //     queue.push_back(Parser::parse_string(&data));
+                    // }
                     
                 } else {
                     println!("ERROR: No header found");
@@ -103,24 +109,30 @@ fn serial_listener(blackboard: &Blackboard, monitor_ref: Arc<Mutex<MeasurementWi
     }
 }
 
-type BlackboardRow<T> = (String, Arc<Mutex<VecDeque<T>>>);
+// type BlackboardRow<T> = (String, Arc<Mutex<VecDeque<T>>>);
+type BlackboardRow = (String, Arc<Mutex<MeasurementWindow>>);
 
 #[derive(Iterable)]
 struct Blackboard
 {
-    bus_voltage: BlackboardRow<f32>,
-    dbg_msg: BlackboardRow<String>,
+    bus_voltage: BlackboardRow,
+    encoder_position: BlackboardRow,
+    // dbg_msg: BlackboardRow<String>,
 }
 
 pub struct MonitorApp {
     include_y: Vec<f64>,
-    measurements: Arc<Mutex<MeasurementWindow>>,
+    bus_voltage: Arc<Mutex<MeasurementWindow>>,
+    encoder_position: Arc<Mutex<MeasurementWindow>>,
 }
 
 impl MonitorApp {
     fn new(look_behind: usize) -> Self {
         Self {
-            measurements: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(
+            bus_voltage: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(
+                look_behind,
+            ))),
+            encoder_position: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(
                 look_behind,
             ))),
             include_y: Vec::new(),
@@ -140,51 +152,76 @@ impl eframe::App for MonitorApp {
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // println!("here.");
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let mut plot = egui::plot::Plot::new("measurements");
+        // egui::CentralPanel::default();
+        egui::Window::new("Bus Voltage")
+        .default_width(500.0)
+        .default_height(200.0)
+        .show(ctx, |ui| {
+            let mut plot = egui::plot::Plot::new("bus_voltage");
             for y in self.include_y.iter() {
                 plot = plot.include_y(*y);
             }
 
             plot.show(ui, |plot_ui| {
                 plot_ui.line(egui::plot::Line::new(
-                    self.measurements.lock().unwrap().plot_values(),
+                    self.bus_voltage.lock().unwrap().plot_values(),
                 ));
             });
         });
+
+        egui::Window::new("Encoder Position")
+        .default_width(500.0)
+        .default_height(200.0)
+        .show(ctx, |ui| {
+            let mut plot = egui::plot::Plot::new("encoder_position");
+            for y in self.include_y.iter() {
+                plot = plot.include_y(*y);
+            }
+
+            plot.show(ui, |plot_ui| {
+                plot_ui.line(egui::plot::Line::new(
+                    self.encoder_position.lock().unwrap().plot_values(),
+                ).color(egui::epaint::Color32::from_rgb(244,184,96)));
+            });
+        });//anchor(Align2::LEFT_TOP);
         // make it always repaint. TODO: can we slow down here?
         ctx.request_repaint();
     }
 }
 
 fn main() {
-    let bus_voltage_queue = Arc::new(Mutex::new(VecDeque::<f32>::new()));
-    let dbg_msg_queue = Arc::new(Mutex::new(VecDeque::<String>::new()));
+    // let bus_voltage_queue = Arc::new(Mutex::new(VecDeque::<f32>::new()));
+    // let dbg_msg_queue = Arc::new(Mutex::new(VecDeque::<String>::new()));
 
-    let bus_voltage_queue_thread = bus_voltage_queue.clone();
-    let dbg_msg_queue_thread = dbg_msg_queue.clone();
+    // let bus_voltage_queue_thread = bus_voltage_queue.clone();
+    // let dbg_msg_queue_thread = dbg_msg_queue.clone();
 
     let mut app = MonitorApp::new(1000);
-    app.include_y.push(-5.0);
+    // app.include_y.push(-5.0);
     app.include_y.push(0.0);
     app.include_y.push(5.0);
 
-    let monitor_ref = app.measurements.clone();
+    let bus_voltage_thread = app.bus_voltage.clone();
+    let encoder_position_thread = app.encoder_position.clone();
     
     let _handle = thread::spawn({
         move || {
 
             let blackboard = Blackboard{
-                bus_voltage: (String::from("bus_voltage"), bus_voltage_queue_thread),
-                dbg_msg: (String::from("dbg_msg"), dbg_msg_queue_thread),
+                bus_voltage: (String::from("bus_voltage"), bus_voltage_thread),
+                encoder_position: (String::from("bus_voltage"), encoder_position_thread),
+                // bus_voltage: (String::from("encoder_position"), encoder_position_thread),
+                // dbg_msg: (String::from("dbg_msg"), dbg_msg_queue_thread),
             };
 
             // Inf loop, does not return
-            serial_listener(&blackboard, monitor_ref);
+            serial_listener(&blackboard);
         }
     });
 
-    let native_options = eframe::NativeOptions::default();
+    let mut native_options = eframe::NativeOptions::default();
+    native_options.maximized = true;
+    
     eframe::run_native("Monitor app", native_options, Box::new(|_| Box::new(app)));
 
     // println!("In main");
