@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 pub type Measurement = egui_plot::PlotPoint;
 
+#[derive(Clone)]
 pub struct MeasurementWindow {
     pub values: VecDeque<Measurement>,
     pub window_size: usize,

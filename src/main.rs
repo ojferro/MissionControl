@@ -83,8 +83,6 @@ fn serial_listener(blackboard: &Blackboard)
                     if header == blackboard.bus_voltage.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            // let mut queue = blackboard.bus_voltage.1.lock().unwrap();
-                            // queue.push_back(f);
                             blackboard.bus_voltage.1.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
@@ -92,9 +90,14 @@ fn serial_listener(blackboard: &Blackboard)
                     if header == blackboard.encoder_position.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            // let mut queue = blackboard.bus_voltage.1.lock().unwrap();
-                            // queue.push_back(f);
                             blackboard.encoder_position.1.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
+                            ctr = ctr + 1;
+                        }
+                    }
+                    if header == blackboard.encoder_velocity.0 {
+                        if let Ok(f) = Parser::parse_float(&data)
+                        {
+                            blackboard.encoder_velocity.1.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
@@ -120,23 +123,29 @@ struct Blackboard
 {
     bus_voltage: BlackboardRow,
     encoder_position: BlackboardRow,
+    encoder_velocity: BlackboardRow,
     // dbg_msg: BlackboardRow<String>,
 }
 
 pub struct EncoderPositionsPlot
 {
+    paused: bool,
+    pause_cache: MeasurementWindow,
+
     show_axis0: bool,
     show_axis1: bool,
     show_axis2: bool,
     show_axis3: bool,
 }
 
-impl Default for EncoderPositionsPlot
+impl EncoderPositionsPlot
 {
-    fn default() -> Self
+    fn new(look_behind: usize) -> Self
     {
         Self
         {
+            paused: false,
+            pause_cache: MeasurementWindow::new_with_look_behind(look_behind),
             show_axis0: true,
             show_axis1: true,
             show_axis2: true,
@@ -147,18 +156,23 @@ impl Default for EncoderPositionsPlot
 
 pub struct EncoderVelocitiesPlot
 {
+    paused: bool,
+    pause_cache: egui_plot::PlotPoint,
+
     show_axis0: bool,
     show_axis1: bool,
     show_axis2: bool,
     show_axis3: bool,
 }
 
-impl Default for EncoderVelocitiesPlot
+impl EncoderVelocitiesPlot
 {
-    fn default() -> Self
+    fn new(look_behind: usize) -> Self
     {
         Self
         {
+            paused: false,
+            pause_cache: egui_plot::PlotPoint::new(0.0, 0.0),
             show_axis0: true,
             show_axis1: true,
             show_axis2: true,
@@ -176,21 +190,26 @@ pub struct AppState
 
 impl AppState
 {
-    pub fn new() -> Self
+    pub fn new(look_behind: usize) -> Self
     {
         Self
         {
             com_port: String::from("#"),
-            encoder_positions: EncoderPositionsPlot::default(),
-            encoder_velocities: EncoderVelocitiesPlot::default(),
+            encoder_positions: EncoderPositionsPlot::new(look_behind),
+            encoder_velocities: EncoderVelocitiesPlot::new(look_behind),
         }
     }
 }
 
 pub struct MonitorApp {
     include_y: Vec<f64>,
+
+    window_size: usize,
+
+    // Buffers used by the listing thread to store the incoming data
     bus_voltage: Arc<Mutex<MeasurementWindow>>,
     encoder_position: Arc<Mutex<MeasurementWindow>>,
+    encoder_velocity: Arc<Mutex<MeasurementWindow>>,
 
 
     app_state: AppState,
@@ -199,14 +218,13 @@ pub struct MonitorApp {
 impl MonitorApp {
     fn new(look_behind: usize) -> Self {
         Self {
-            bus_voltage: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(
-                look_behind,
-            ))),
-            encoder_position: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(
-                look_behind,
-            ))),
+            bus_voltage: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
+            encoder_position: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
+            encoder_velocity: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
             include_y: Vec::new(),
-            app_state: AppState::new(),
+            app_state: AppState::new(look_behind),
+
+            window_size: look_behind,
         }
     }
 }
@@ -226,7 +244,7 @@ impl eframe::App for MonitorApp {
         // egui::CentralPanel::default();
 
         let plot_height = 250.0;
-        let plot_wigth = 500.0;
+        let plot_width = 500.0;
         let padding = 40.0;
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -241,7 +259,7 @@ impl eframe::App for MonitorApp {
             // The central panel the region left after adding TopPanel's and SidePanel's
 
             egui::Window::new("Bus Voltage")
-            .default_width(plot_wigth)
+            .default_width(plot_width)
             .default_height(plot_height)
             .collapsible(false)
             .anchor(Align2::LEFT_TOP, [0.0,0.0])
@@ -260,7 +278,7 @@ impl eframe::App for MonitorApp {
             });
 
             egui::Window::new("Encoder Position")
-            .default_width(plot_wigth)
+            .default_width(plot_width)
             .default_height(plot_height)
             .collapsible(false)
             .drag_to_scroll(false)
@@ -273,25 +291,55 @@ impl eframe::App for MonitorApp {
                     ui.checkbox(&mut self.app_state.encoder_positions.show_axis0, "Show Axis 0")
                         .on_hover_text("Uncheck to hide all the widgets.");
 
-                    // egui::reset_button(ui, self);
-
+                    if ui.button("Pause").on_hover_text("Pause the plot.").clicked() {
+                        self.app_state.encoder_positions.paused = !self.app_state.encoder_positions.paused;
+                        self.app_state.encoder_positions.pause_cache = MeasurementWindow{
+                            values: self.encoder_position.lock().unwrap().values.clone(),
+                            window_size: 0,
+                        }
+                    };
                 });
                 ui.separator();
 
                 // Encoder positions plots
-                let mut plot = Plot::new("encoder_position");
+                let mut encoder_positions_plot = Plot::new("encoder_position");
                 for y in self.include_y.iter() {
-                    plot = plot.include_y(*y);
+                    encoder_positions_plot = encoder_positions_plot.include_y(*y);
                 }
 
-                plot.show(ui, |plot_ui| {
+                encoder_positions_plot.show(ui, |plot_ui| {
                     if self.app_state.encoder_positions.show_axis0{
-                        plot_ui.line(Line::new(
-                            self.encoder_position.lock().unwrap().plot_values(),
-                        ));
+                        if !self.app_state.encoder_positions.paused {
+                            plot_ui.line(Line::new(self.encoder_position.lock().unwrap().plot_values()));
+                        } else {
+                            // todo!("Plot the self.app_state.encoder_positions.pause_cache");
+                            plot_ui.line(Line::new(self.app_state.encoder_positions.pause_cache.plot_values()));
+                        }
                     }
                 });
             });
+
+
+            egui::Window::new("Encoder Velocity")
+                .default_width(plot_width)
+                .default_height(plot_height)
+                .collapsible(false)
+                .anchor(Align2::LEFT_TOP, [0.0,2.0*(plot_height+padding)])
+                .show(ctx, |ui: &mut egui::Ui| {
+
+                    // Encoder velocities plots
+                    let mut encoder_velocities_plot = Plot::new("encoder_velocities");
+                    for y in self.include_y.iter() {
+                        encoder_velocities_plot = encoder_velocities_plot.include_y(*y);
+                    }
+
+                    encoder_velocities_plot.show(ui, |plot_ui| {
+                        if self.app_state.encoder_velocities.show_axis0{
+                            plot_ui.line(Line::new(self.encoder_velocity.lock().unwrap().plot_values()));
+                        }
+                    });
+                });
+
         });
 
         ctx.request_repaint();
@@ -299,19 +347,21 @@ impl eframe::App for MonitorApp {
 }
 
 fn main() {
-    let mut app = MonitorApp::new(500);
-    app.include_y.push(0.0);
+    let mut app = MonitorApp::new(100);
+    app.include_y.push(-5.0);
     app.include_y.push(5.0);
 
     let bus_voltage_thread = app.bus_voltage.clone();
     let encoder_position_thread = app.encoder_position.clone();
+    let encoder_velocity_thread = app.encoder_velocity.clone();
     
     let _handle = thread::spawn({
         move || {
 
             let blackboard = Blackboard{
                 bus_voltage: (String::from("bus_voltage"), bus_voltage_thread),
-                encoder_position: (String::from("bus_voltage"), encoder_position_thread),
+                encoder_position: (String::from("encoder_position"), encoder_position_thread),
+                encoder_velocity: (String::from("encoder_velocity"), encoder_velocity_thread),
             };
 
             // Inf loop, does not return
