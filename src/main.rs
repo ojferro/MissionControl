@@ -265,7 +265,7 @@ impl eframe::App for MonitorApp {
             .anchor(Align2::LEFT_TOP, [0.0,0.0])
             .show(ctx, |ui: &mut egui::Ui| {
                 let mut plot = Plot::new("bus_voltage").legend(Legend::default());
-                    let include_y_bus_voltage = vec![0.0,24.0];
+                    let include_y_bus_voltage = vec![14.0,16.0];
                     for y in include_y_bus_voltage.iter() {
                         plot = plot.include_y(*y);
                     }
