@@ -4,7 +4,8 @@ use crate::measurements::MeasurementWindow;
 use eframe::Theme;
 use eframe::egui;
 use egui::Align2;
-use egui::TextBuffer;
+use crossbeam_channel;
+// use egui::TextBuffer;
 use egui_plot::{Legend, Line, Plot};
 use eframe::egui::{Style, Visuals};
 
@@ -35,7 +36,7 @@ impl Parser {
     }
 }
 
-fn serial_listener(blackboard: &Blackboard)
+fn serial_listener(senders: SenderBlackboard)
 {
     let delay_between_rereads = 10;
     println!("Serial port:");
@@ -51,28 +52,28 @@ fn serial_listener(blackboard: &Blackboard)
 
     let mut incoming_stream: VecDeque<u8> = VecDeque::with_capacity(256);
     let mut ctr = 0;
-    loop {
-        // serial_buf may contain less or more than one whole msg (i.e. chars delimited by \n)
-        let delimiter = b'\n'; // Change this to the delimiter character(s) you're using
-        let delimiter_header = ':'; // Change this to the delimiter character(s) you're using
-        let mut read_buf: [u8; 256] = [0; 256];
-        // let mut leftover_buf: Vec<u8> = vec![0; 256];
-        // let mut remaining_len = 0;
 
-        if blackboard.master_msgs.1.lock().unwrap().len() > 0 {
-            let msg = blackboard.master_msgs.1.lock().unwrap().pop_front().unwrap();
-            println!("Sending msg: {}", msg);
-            port.write(msg.as_bytes()).expect("Failed to write to serial port");
-        }
+    // serial_buf may contain less or more than one whole msg (i.e. chars delimited by \n)
+    let delimiter = b'\n'; // Change this to the delimiter character(s) you're using
+    let delimiter_header = ':'; // Change this to the delimiter character(s) you're using
+
+    loop {
+        let mut read_buf: [u8; 256] = [0; 256];
+
+        // if blackboard.master_msgs.1.lock().unwrap().len() > 0 {
+        //     let msg = blackboard.master_msgs.1.lock().unwrap().pop_front().unwrap();
+        //     println!("Sending msg: {}", msg);
+        //     port.write(msg.as_bytes()).expect("Failed to write to serial port");
+        // }
 
         match port.read(&mut read_buf){
             Ok(bits_read) =>{
                 // println!("DBG: Bits read: {}", bits_read);
                 incoming_stream.extend(&read_buf[..bits_read]);
             },
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (
+            Err(ref e) if e.kind() == io::ErrorKind::TimedOut =>{
                 thread::sleep(Duration::from_millis(delay_between_rereads))
-            ),
+            },
             Err(_e) => {},
         }
         // Process queue to see if there are any complete messages (end with \n)
@@ -88,31 +89,31 @@ fn serial_listener(blackboard: &Blackboard)
                     let header = message[..index_header_end].into_iter().collect::<String>();
                     let data = message[index_header_end+1..].into_iter().map(|c| *c as u8).into_iter().collect::<Vec<u8>>();
 
-                    if header == blackboard.bus_voltage.0 {
+                    if header == senders.bus_voltage.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            blackboard.bus_voltage.1.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
+                            senders.bus_voltage.1.send(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
-                    if header == blackboard.encoder_position.0 {
+                    if header == senders.encoder_position.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            blackboard.encoder_position.1.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
+                            senders.encoder_position.1.send(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
-                    if header == blackboard.encoder_velocity.0 {
+                    if header == senders.encoder_velocity.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            blackboard.encoder_velocity.1.lock().unwrap().add(measurements::Measurement::new(ctr as f64, f as f64));
+                            senders.encoder_velocity.1.send(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
                     
-                    if header == blackboard.dbg_msgs.0 {
+                    if header == senders.dbg_msgs.0 {
                         let s = Parser::parse_string(&data);
-                        blackboard.dbg_msgs.1.lock().unwrap().push_back(s);
+                        senders.dbg_msgs.1.send(s);
                     }
                     
                 }
@@ -124,83 +125,86 @@ fn serial_listener(blackboard: &Blackboard)
     }
 }
 
-
-
-// type BlackboardRow<T> = (String, Arc<Mutex<VecDeque<T>>>);
-type BlackboardRow = (String, Arc<Mutex<MeasurementWindow>>);
-type MsgsRow  = (String, Arc<Mutex<VecDeque<MsgType>>>);
-
-#[derive(Iterable)]
-struct Blackboard
-{
-    bus_voltage: BlackboardRow,
-    encoder_position: BlackboardRow,
-    encoder_velocity: BlackboardRow,
-    dbg_msgs : MsgsRow,
-    master_msgs : MsgsRow,
-    // dbg_msg: BlackboardRow<String>,
-}
-
-pub struct EncoderPositionsPlot
+pub struct MeasurementPlot
 {
     paused: bool,
-    pause_cache: MeasurementWindow,
-
-    show_axis0: bool,
-    show_axis1: bool,
-    show_axis2: bool,
-    show_axis3: bool,
+    measurements: MeasurementWindow,
 }
 
-impl EncoderPositionsPlot
+impl MeasurementPlot
 {
     fn new(look_behind: usize) -> Self
     {
         Self
         {
             paused: false,
-            pause_cache: MeasurementWindow::new_with_look_behind(look_behind),
-            show_axis0: true,
-            show_axis1: true,
-            show_axis2: true,
-            show_axis3: true,
+            measurements: MeasurementWindow::new_with_look_behind(look_behind),
         }
     }
 }
 
-pub struct EncoderVelocitiesPlot
-{
-    paused: bool,
-    pause_cache: egui_plot::PlotPoint,
+// pub struct EncoderPositionsPlot
+// {
+//     paused: bool,
+//     pause_cache: MeasurementWindow,
 
-    show_axis0: bool,
-    show_axis1: bool,
-    show_axis2: bool,
-    show_axis3: bool,
-}
+//     show_axis0: bool,
+//     show_axis1: bool,
+//     show_axis2: bool,
+//     show_axis3: bool,
+// }
 
-impl EncoderVelocitiesPlot
-{
-    fn new(look_behind: usize) -> Self
-    {
-        Self
-        {
-            paused: false,
-            pause_cache: egui_plot::PlotPoint::new(0.0, 0.0),
-            show_axis0: true,
-            show_axis1: true,
-            show_axis2: true,
-            show_axis3: true,
-        }
-    }
-}
+// impl EncoderPositionsPlot
+// {
+//     fn new(look_behind: usize) -> Self
+//     {
+//         Self
+//         {
+//             paused: false,
+//             pause_cache: MeasurementWindow::new_with_look_behind(look_behind),
+//             show_axis0: true,
+//             show_axis1: true,
+//             show_axis2: true,
+//             show_axis3: true,
+//         }
+//     }
+// }
+
+// pub struct EncoderVelocitiesPlot
+// {
+//     paused: bool,
+//     pause_cache: egui_plot::PlotPoint,
+
+//     show_axis0: bool,
+//     show_axis1: bool,
+//     show_axis2: bool,
+//     show_axis3: bool,
+// }
+
+// impl EncoderVelocitiesPlot
+// {
+//     fn new(look_behind: usize) -> Self
+//     {
+//         Self
+//         {
+//             paused: false,
+//             pause_cache: egui_plot::PlotPoint::new(0.0, 0.0),
+//             show_axis0: true,
+//             show_axis1: true,
+//             show_axis2: true,
+//             show_axis3: true,
+//         }
+//     }
+// }
 
 pub struct AppState
 {
     com_port: String,
-    encoder_positions: EncoderPositionsPlot,
-    encoder_velocities: EncoderVelocitiesPlot,
-    dbg_msgs: String,
+
+    bus_voltages: MeasurementPlot,
+    encoder_positions: MeasurementPlot,
+    encoder_velocities: MeasurementPlot,
+    dbg_msgs: VecDeque<String>,
 
     axis_state: Buttons,
 }
@@ -212,50 +216,37 @@ impl AppState
         Self
         {
             com_port: String::from("#"),
-            encoder_positions: EncoderPositionsPlot::new(look_behind),
-            encoder_velocities: EncoderVelocitiesPlot::new(look_behind),
-            dbg_msgs: String::new(),
+
+            bus_voltages: MeasurementPlot::new(look_behind),
+            encoder_positions: MeasurementPlot::new(look_behind),
+            encoder_velocities: MeasurementPlot::new(look_behind),
+            dbg_msgs: VecDeque::<String>::new(),
+
             axis_state: Buttons::First,
         }
     }
 }
 
-type MsgType = String;
+// type MsgType = String;
 
 pub struct MonitorApp {
     include_y: Vec<f64>,
-
     window_size: usize,
 
-    // Buffers used by the listing thread to store the incoming data
-    bus_voltage: Arc<Mutex<MeasurementWindow>>,
-    encoder_position: Arc<Mutex<MeasurementWindow>>,
-    encoder_velocity: Arc<Mutex<MeasurementWindow>>,
-
-    dbg_msgs: Arc<Mutex<VecDeque<MsgType>>>,
-    master_msgs: Arc<Mutex<VecDeque<MsgType>>>,
-
-
     app_state: AppState,
+    receivers: ReceiverBlackboard,
 }
 
-impl MonitorApp {
-    fn new(look_behind: usize) -> Self {
-        Self {
-            bus_voltage: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
-            encoder_position: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
-            encoder_velocity: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
+// impl MonitorApp {
+//     fn new(look_behind: usize) -> Self {
+//         Self {
+//             include_y: Vec::new(),
+//             app_state: AppState::new(look_behind),
 
-            dbg_msgs: Arc::new(Mutex::new(VecDeque::with_capacity(10))),
-            master_msgs: Arc::new(Mutex::new(VecDeque::with_capacity(10))),
-
-            include_y: Vec::new(),
-            app_state: AppState::new(look_behind),
-
-            window_size: look_behind,
-        }
-    }
-}
+//             window_size: look_behind,
+//         }
+//     }
+// }
 
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
@@ -303,14 +294,19 @@ impl eframe::App for MonitorApp {
             .anchor(Align2::LEFT_TOP, [0.0,0.0])
             .show(ctx, |ui: &mut egui::Ui| {
                 let mut plot = Plot::new("bus_voltage").legend(Legend::default());
-                    let include_y_bus_voltage = vec![14.0,24.0];
+                    let include_y_bus_voltage = vec![0.0,24.0];
                     for y in include_y_bus_voltage.iter() {
                         plot = plot.include_y(*y);
                     }
 
+                if let Ok(mut bus_voltage) = self.receivers.bus_voltage.1.try_recv()
+                {
+                    self.app_state.bus_voltages.measurements.add(bus_voltage);
+                }
+
                 plot.show(ui, |plot_ui| {
                     plot_ui.line(Line::new(
-                        self.bus_voltage.lock().unwrap().plot_values(),
+                        self.app_state.bus_voltages.measurements.plot_values()
                     ));
                 });
                 
@@ -327,15 +323,11 @@ impl eframe::App for MonitorApp {
                 // Checkboxes to select which axes get plotted 
                 ui.horizontal(|ui| {
 
-                    ui.checkbox(&mut self.app_state.encoder_positions.show_axis0, "Show Axis 0")
-                        .on_hover_text("Uncheck to hide all the widgets.");
+                    // ui.checkbox(&mut self.app_state.encoder_positions.show_axis0, "Show Axis 0")
+                    //     .on_hover_text("Uncheck to hide all the widgets.");
 
                     if ui.button("Pause").on_hover_text("Pause the plot.").clicked() {
                         self.app_state.encoder_positions.paused = !self.app_state.encoder_positions.paused;
-                        self.app_state.encoder_positions.pause_cache = MeasurementWindow{
-                            values: self.encoder_position.lock().unwrap().values.clone(),
-                            window_size: 0,
-                        }
                     };
                 });
                 ui.separator();
@@ -345,16 +337,17 @@ impl eframe::App for MonitorApp {
                 for y in self.include_y.iter() {
                     encoder_positions_plot = encoder_positions_plot.include_y(*y);
                 }
+                
+                // Only update the values if not paused
+                if !self.app_state.encoder_positions.paused {
+                    if let Ok(mut encoder_position) = self.receivers.encoder_position.1.try_recv()
+                    {
+                        self.app_state.encoder_positions.measurements.add(encoder_position);
+                    }
+                }
 
                 encoder_positions_plot.show(ui, |plot_ui| {
-                    if self.app_state.encoder_positions.show_axis0{
-                        if !self.app_state.encoder_positions.paused {
-                            plot_ui.line(Line::new(self.encoder_position.lock().unwrap().plot_values()));
-                        } else {
-                            // todo!("Plot the self.app_state.encoder_positions.pause_cache");
-                            plot_ui.line(Line::new(self.app_state.encoder_positions.pause_cache.plot_values()));
-                        }
-                    }
+                    plot_ui.line(Line::new(self.app_state.encoder_positions.measurements.plot_values()));
                 });
             });
 
@@ -366,6 +359,26 @@ impl eframe::App for MonitorApp {
                 .anchor(Align2::LEFT_TOP, [0.0,2.0*(plot_height+padding)])
                 .show(ctx, |ui: &mut egui::Ui| {
 
+                    // Checkboxes to select which axes get plotted 
+                    ui.horizontal(|ui| {
+
+                        // ui.checkbox(&mut self.app_state.encoder_positions.show_axis0, "Show Axis 0")
+                        //     .on_hover_text("Uncheck to hide all the widgets.");
+
+                        if ui.button("Pause").on_hover_text("Pause the plot.").clicked() {
+                            self.app_state.encoder_velocities.paused = !self.app_state.encoder_velocities.paused;
+                        };
+                    });
+                    ui.separator();
+
+                    // Only update if not paused
+                    if !self.app_state.encoder_velocities.paused {
+                        if let Ok(mut encoder_velocity) = self.receivers.encoder_velocity.1.try_recv()
+                        {
+                            self.app_state.encoder_velocities.measurements.add(encoder_velocity);
+                        }
+                    }
+
                     // Encoder velocities plots
                     let mut encoder_velocities_plot = Plot::new("encoder_velocities");
                     for y in self.include_y.iter() {
@@ -373,9 +386,7 @@ impl eframe::App for MonitorApp {
                     }
 
                     encoder_velocities_plot.show(ui, |plot_ui| {
-                        if self.app_state.encoder_velocities.show_axis0{
-                            plot_ui.line(Line::new(self.encoder_velocity.lock().unwrap().plot_values()));
-                        }
+                        plot_ui.line(Line::new(self.app_state.encoder_velocities.measurements.plot_values()));
                     });
                 });
 
@@ -388,13 +399,16 @@ impl eframe::App for MonitorApp {
                     
                     ui.horizontal(|ui| {
                         if ui.button("ODrv Calibration").clicked() {
-                            self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:calibrate"));
+                            // self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:calibrate"));
+                            todo!("Calibrate not implemented yet");
                         };
                         if ui.button("ODrv Closed Loop Ctrl").clicked() {
-                            self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:closed_loop_ctrl"));
+                            todo!("Calibrate not implemented yet");
+                            // self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:closed_loop_ctrl"));
                         };
                         if ui.button("ODrv Idle").clicked() {
-                            self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:idle_ctrl"));
+                            todo!("Calibrate not implemented yet");
+                            // self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:idle_ctrl"));
                         };
                     });
                     
@@ -411,13 +425,18 @@ impl eframe::App for MonitorApp {
                     
                     ui.separator();
                     
-                    if let Some(new_msg) = self.dbg_msgs.lock().unwrap().pop_front()
+                    // Get any new msgs
+                    if let Ok(mut dbg_msg) = self.receivers.dbg_msgs.1.try_recv()
                     {
-                        // self.app_state.dbg_msgs.clear();
-                        self.app_state.dbg_msgs.push_str(&new_msg.as_str());
-                        println!("{}", self.app_state.dbg_msgs);
+                        let MAX_LEN = 10; // TODO: Make this configurable in the AppState
+                        self.app_state.dbg_msgs.push_back(dbg_msg);
+                        if self.app_state.dbg_msgs.len() > MAX_LEN {
+                            self.app_state.dbg_msgs.pop_front();
+                        }
                     }
-                    ui.add_sized(ui.available_size(), egui::TextEdit::multiline(&mut self.app_state.dbg_msgs))
+                    
+                    let mut display_string = self.app_state.dbg_msgs.iter().fold(String::new(), |acc, s| acc + s + "\n");
+                    ui.add_sized(ui.available_size(), egui::TextEdit::multiline(&mut display_string))
                 });
 
         });
@@ -426,39 +445,79 @@ impl eframe::App for MonitorApp {
     }
 }
 
+// All rows consist of a name and a Sender
+type MeasurementRow = (String, crossbeam_channel::Sender<measurements::Measurement>);
+type MsgRow = (String, crossbeam_channel::Sender<String>);
+struct SenderBlackboard
+{
+    bus_voltage: MeasurementRow,
+    encoder_position: MeasurementRow,
+    encoder_velocity: MeasurementRow,
+    dbg_msgs : MsgRow,
+}
+
+type MeasurementRowRx = (String, crossbeam_channel::Receiver<measurements::Measurement>);
+type MsgRowRx = (String, crossbeam_channel::Receiver<String>);
+struct ReceiverBlackboard
+{
+    bus_voltage: MeasurementRowRx,
+    encoder_position: MeasurementRowRx,
+    encoder_velocity: MeasurementRowRx,
+    dbg_msgs : MsgRowRx,
+}
+
 fn main() {
-    let mut app = MonitorApp::new(100);
+
+    let (bus_voltage_s, bus_voltage_r) = crossbeam_channel::unbounded();
+    let (encoder_position_s, encoder_position_r) = crossbeam_channel::unbounded();
+    let (encoder_velocity_s, encoder_velocity_r) = crossbeam_channel::unbounded();
+    let (dbg_msgs_s, dbg_msgs_r) = crossbeam_channel::unbounded();
+
+
+    let mut app = MonitorApp {
+        include_y: Vec::new(),
+        window_size: 100,
+        app_state: AppState::new(100),
+
+        receivers: ReceiverBlackboard{
+            bus_voltage: ("bus_voltage".to_string(), bus_voltage_r),
+            encoder_position: ("encoder_position".to_string(), encoder_position_r),
+            encoder_velocity: ("encoder_position".to_string(), encoder_velocity_r),
+            dbg_msgs: ("dbg_msgs".to_string(), dbg_msgs_r),
+        },
+    };
+    
+
     app.include_y.push(-5.0);
     app.include_y.push(5.0);
-
-    let bus_voltage_thread = app.bus_voltage.clone();
-    let encoder_position_thread = app.encoder_position.clone();
-    let encoder_velocity_thread = app.encoder_velocity.clone();
-    let dbg_msgs_thread = app.dbg_msgs.clone();
-    let master_msgs_thread = app.master_msgs.clone();
     
-    let _handle = thread::spawn({
-        move || {
+    {
+        // let bus_voltage_s = bus_voltage_s.clone();
+        // let encoder_position_s = encoder_position_s.clone();
+        // let encoder_velocity_s = encoder_velocity_s.clone();
+        // let dbg_msgs_s = dbg_msgs_s.clone();
+        thread::spawn({
+            move || {
+                
+                let senders = SenderBlackboard{
+                    bus_voltage: ("bus_voltage".to_string(), bus_voltage_s),
+                    encoder_position: ("encoder_position".to_string(), encoder_position_s),
+                    encoder_velocity: ("encoder_position".to_string(), encoder_velocity_s),
+                    dbg_msgs: ("dbg_msgs".to_string(), dbg_msgs_s),
+                };
 
-            let blackboard = Blackboard{
-                bus_voltage: (String::from("bus_voltage"), bus_voltage_thread),
-                encoder_position: (String::from("encoder_position"), encoder_position_thread),
-                encoder_velocity: (String::from("encoder_velocity"), encoder_velocity_thread),
-                dbg_msgs: (String::from("dbg_msg"), dbg_msgs_thread),
-                master_msgs: (String::from("master_msgs"), master_msgs_thread),
-            };
-
-            // Inf loop, does not return
-            serial_listener(&blackboard);
-        }
-    });
+                // Inf loop, does not return
+                serial_listener(senders);
+            }
+        });
+    }
 
     let mut native_options = eframe::NativeOptions::default();
     native_options.maximized = true;
     native_options.decorated = false;
     native_options.default_theme = Theme::Dark;
     
-    let _ = eframe::run_native("Monitor app", native_options, Box::new(
+    let _ = eframe::run_native("Mission Control", native_options, Box::new(
         |creation_context| {
             let style = Style {
                 visuals: Visuals::dark(),
@@ -467,24 +526,5 @@ fn main() {
         creation_context.egui_ctx.set_style(style);
         Box::new(app)}));
 
-    // println!("In main");
-    // let mut ctr = 0;
-    // loop{
-    //     let mut bus_voltage_lock = bus_voltage_queue.try_lock();
-    //     if let Ok(ref mut queue) = bus_voltage_lock{
-    //         if let Some(m) = queue.pop_front(){
-    //             println!("Message from bus_voltage_queue #{}: {:.3}", ctr, m);
-    //             ctr = ctr+1;
-    //         }
-    //     }
-
-    //     let mut dbg_msg_lock = bus_voltage_queue.try_lock();
-    //     if let Ok(ref mut queue) = dbg_msg_lock{
-    //         if let Some(m) = queue.pop_front(){
-    //             println!("Message from dbg_msg_lock_queue: {}", m);
-    //         }
-    //     }
-
-    //     thread::sleep(Duration::from_millis(100));
-    // }
+    
 }
