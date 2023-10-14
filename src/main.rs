@@ -4,6 +4,7 @@ use crate::measurements::MeasurementWindow;
 use eframe::Theme;
 use eframe::egui;
 use egui::Align2;
+use egui::TextBuffer;
 use egui_plot::{Legend, Line, Plot};
 use eframe::egui::{Style, Visuals};
 
@@ -57,6 +58,13 @@ fn serial_listener(blackboard: &Blackboard)
         let mut read_buf: [u8; 256] = [0; 256];
         // let mut leftover_buf: Vec<u8> = vec![0; 256];
         // let mut remaining_len = 0;
+
+        if blackboard.master_msgs.1.lock().unwrap().len() > 0 {
+            let msg = blackboard.master_msgs.1.lock().unwrap().pop_front().unwrap();
+            println!("Sending msg: {}", msg);
+            port.write(msg.as_bytes()).expect("Failed to write to serial port");
+        }
+
         match port.read(&mut read_buf){
             Ok(bits_read) =>{
                 // println!("DBG: Bits read: {}", bits_read);
@@ -102,21 +110,25 @@ fn serial_listener(blackboard: &Blackboard)
                         }
                     }
                     
-                    // if header == blackboard.dbg_msg.0 {
-                    //     let mut queue = blackboard.dbg_msg.1.lock().unwrap();
-                    //     queue.push_back(Parser::parse_string(&data));
-                    // }
+                    if header == blackboard.dbg_msgs.0 {
+                        let s = Parser::parse_string(&data);
+                        blackboard.dbg_msgs.1.lock().unwrap().push_back(s);
+                    }
                     
-                } else {
-                    println!("ERROR: No header found");
                 }
+                // else {
+                    // println!("ERROR: No header found");
+                // }
             }
         }
     }
 }
 
+
+
 // type BlackboardRow<T> = (String, Arc<Mutex<VecDeque<T>>>);
 type BlackboardRow = (String, Arc<Mutex<MeasurementWindow>>);
+type MsgsRow  = (String, Arc<Mutex<VecDeque<MsgType>>>);
 
 #[derive(Iterable)]
 struct Blackboard
@@ -124,6 +136,8 @@ struct Blackboard
     bus_voltage: BlackboardRow,
     encoder_position: BlackboardRow,
     encoder_velocity: BlackboardRow,
+    dbg_msgs : MsgsRow,
+    master_msgs : MsgsRow,
     // dbg_msg: BlackboardRow<String>,
 }
 
@@ -186,6 +200,9 @@ pub struct AppState
     com_port: String,
     encoder_positions: EncoderPositionsPlot,
     encoder_velocities: EncoderVelocitiesPlot,
+    dbg_msgs: String,
+
+    axis_state: Buttons,
 }
 
 impl AppState
@@ -197,9 +214,13 @@ impl AppState
             com_port: String::from("#"),
             encoder_positions: EncoderPositionsPlot::new(look_behind),
             encoder_velocities: EncoderVelocitiesPlot::new(look_behind),
+            dbg_msgs: String::new(),
+            axis_state: Buttons::First,
         }
     }
 }
+
+type MsgType = String;
 
 pub struct MonitorApp {
     include_y: Vec<f64>,
@@ -211,6 +232,9 @@ pub struct MonitorApp {
     encoder_position: Arc<Mutex<MeasurementWindow>>,
     encoder_velocity: Arc<Mutex<MeasurementWindow>>,
 
+    dbg_msgs: Arc<Mutex<VecDeque<MsgType>>>,
+    master_msgs: Arc<Mutex<VecDeque<MsgType>>>,
+
 
     app_state: AppState,
 }
@@ -221,12 +245,24 @@ impl MonitorApp {
             bus_voltage: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
             encoder_position: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
             encoder_velocity: Arc::new(Mutex::new(MeasurementWindow::new_with_look_behind(look_behind,))),
+
+            dbg_msgs: Arc::new(Mutex::new(VecDeque::with_capacity(10))),
+            master_msgs: Arc::new(Mutex::new(VecDeque::with_capacity(10))),
+
             include_y: Vec::new(),
             app_state: AppState::new(look_behind),
 
             window_size: look_behind,
         }
     }
+}
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+enum Buttons {
+    First,
+    Second,
+    Third,
 }
 
 impl eframe::App for MonitorApp {
@@ -245,6 +281,8 @@ impl eframe::App for MonitorApp {
 
         let plot_height = 250.0;
         let plot_width = 500.0;
+        let debug_msgs_width = 800.0;
+        let debug_msgs_height = 250.0;
         let padding = 40.0;
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -265,7 +303,7 @@ impl eframe::App for MonitorApp {
             .anchor(Align2::LEFT_TOP, [0.0,0.0])
             .show(ctx, |ui: &mut egui::Ui| {
                 let mut plot = Plot::new("bus_voltage").legend(Legend::default());
-                    let include_y_bus_voltage = vec![14.0,16.0];
+                    let include_y_bus_voltage = vec![14.0,24.0];
                     for y in include_y_bus_voltage.iter() {
                         plot = plot.include_y(*y);
                     }
@@ -341,6 +379,47 @@ impl eframe::App for MonitorApp {
                     });
                 });
 
+            egui::Window::new("Debug Messages")
+                .default_width(debug_msgs_width)
+                .default_height(debug_msgs_height)
+                .collapsible(false)
+                .anchor(Align2::RIGHT_BOTTOM, [0.0,0.0])
+                .show(ctx, |ui: &mut egui::Ui| {
+                    
+                    ui.horizontal(|ui| {
+                        if ui.button("ODrv Calibration").clicked() {
+                            self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:calibrate"));
+                        };
+                        if ui.button("ODrv Closed Loop Ctrl").clicked() {
+                            self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:closed_loop_ctrl"));
+                        };
+                        if ui.button("ODrv Idle").clicked() {
+                            self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:idle_ctrl"));
+                        };
+                    });
+                    
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::First, "First");
+                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::Second, "Second");
+                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::Third, "Third");
+                    });
+                    ui.end_row();
+
+                    if &mut self.app_state.axis_state == &mut Buttons::Second{
+                        ui.label("Second");
+                    }
+                    
+                    ui.separator();
+                    
+                    if let Some(new_msg) = self.dbg_msgs.lock().unwrap().pop_front()
+                    {
+                        // self.app_state.dbg_msgs.clear();
+                        self.app_state.dbg_msgs.push_str(&new_msg.as_str());
+                        println!("{}", self.app_state.dbg_msgs);
+                    }
+                    ui.add_sized(ui.available_size(), egui::TextEdit::multiline(&mut self.app_state.dbg_msgs))
+                });
+
         });
 
         ctx.request_repaint();
@@ -355,6 +434,8 @@ fn main() {
     let bus_voltage_thread = app.bus_voltage.clone();
     let encoder_position_thread = app.encoder_position.clone();
     let encoder_velocity_thread = app.encoder_velocity.clone();
+    let dbg_msgs_thread = app.dbg_msgs.clone();
+    let master_msgs_thread = app.master_msgs.clone();
     
     let _handle = thread::spawn({
         move || {
@@ -363,6 +444,8 @@ fn main() {
                 bus_voltage: (String::from("bus_voltage"), bus_voltage_thread),
                 encoder_position: (String::from("encoder_position"), encoder_position_thread),
                 encoder_velocity: (String::from("encoder_velocity"), encoder_velocity_thread),
+                dbg_msgs: (String::from("dbg_msg"), dbg_msgs_thread),
+                master_msgs: (String::from("master_msgs"), master_msgs_thread),
             };
 
             // Inf loop, does not return
