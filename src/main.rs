@@ -92,28 +92,37 @@ fn serial_listener(senders: SenderBlackboard)
                     if header == senders.bus_voltage.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            senders.bus_voltage.1.send(measurements::Measurement::new(ctr as f64, f as f64));
+                            // println!("Bus voltage: {}", f);
+
+                            // This will not send if the channel is at capacity.
+                            // Queueing should happen on the AppState side if desired. This will always send the latest value.
+                            let _ = senders.bus_voltage.1.try_send(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
                     if header == senders.encoder_position.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            senders.encoder_position.1.send(measurements::Measurement::new(ctr as f64, f as f64));
+                            println!("encoder pos: {}", f);
+                            // This will not send if the channel is at capacity.
+                            // Queueing should happen on the AppState side if desired. This will always send the latest value.
+                            let _ = senders.encoder_position.1.try_send(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
                     if header == senders.encoder_velocity.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            senders.encoder_velocity.1.send(measurements::Measurement::new(ctr as f64, f as f64));
+                            // This will not send if the channel is at capacity.
+                            // Queueing should happen on the AppState side if desired. This will always send the latest value.
+                            let _ = senders.encoder_velocity.1.try_send(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
                     
                     if header == senders.dbg_msgs.0 {
                         let s = Parser::parse_string(&data);
-                        senders.dbg_msgs.1.send(s);
+                        senders.dbg_msgs.1.try_send(s);
                     }
                     
                 }
@@ -468,10 +477,12 @@ struct ReceiverBlackboard
 
 fn main() {
 
-    let (bus_voltage_s, bus_voltage_r) = crossbeam_channel::unbounded();
-    let (encoder_position_s, encoder_position_r) = crossbeam_channel::unbounded();
-    let (encoder_velocity_s, encoder_velocity_r) = crossbeam_channel::unbounded();
-    let (dbg_msgs_s, dbg_msgs_r) = crossbeam_channel::unbounded();
+    let sender_queue_capacity = 2;
+
+    let (bus_voltage_s, bus_voltage_r) = crossbeam_channel::bounded(sender_queue_capacity);
+    let (encoder_position_s, encoder_position_r) = crossbeam_channel::bounded(sender_queue_capacity);
+    let (encoder_velocity_s, encoder_velocity_r) = crossbeam_channel::bounded(sender_queue_capacity);
+    let (dbg_msgs_s, dbg_msgs_r) = crossbeam_channel::bounded(sender_queue_capacity);
 
 
     let mut app = MonitorApp {
@@ -492,10 +503,6 @@ fn main() {
     app.include_y.push(5.0);
     
     {
-        // let bus_voltage_s = bus_voltage_s.clone();
-        // let encoder_position_s = encoder_position_s.clone();
-        // let encoder_velocity_s = encoder_velocity_s.clone();
-        // let dbg_msgs_s = dbg_msgs_s.clone();
         thread::spawn({
             move || {
                 
@@ -516,7 +523,8 @@ fn main() {
     native_options.maximized = true;
     native_options.decorated = false;
     native_options.default_theme = Theme::Dark;
-    
+    native_options.hardware_acceleration = eframe::HardwareAcceleration::Preferred;
+
     let _ = eframe::run_native("Mission Control", native_options, Box::new(
         |creation_context| {
             let style = Style {
