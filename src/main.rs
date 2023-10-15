@@ -60,11 +60,9 @@ fn serial_listener(senders: SenderBlackboard)
     loop {
         let mut read_buf: [u8; 256] = [0; 256];
 
-        // if blackboard.master_msgs.1.lock().unwrap().len() > 0 {
-        //     let msg = blackboard.master_msgs.1.lock().unwrap().pop_front().unwrap();
-        //     println!("Sending msg: {}", msg);
-        //     port.write(msg.as_bytes()).expect("Failed to write to serial port");
-        // }
+        if let Ok(msg) = senders.echo_channel.1.try_recv() {
+            port.write(msg.as_bytes()).expect("Failed to write to serial port");
+        }
 
         match port.read(&mut read_buf){
             Ok(bits_read) =>{
@@ -103,7 +101,7 @@ fn serial_listener(senders: SenderBlackboard)
                     if header == senders.encoder_position.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            println!("encoder pos: {}", f);
+                            // println!("encoder pos: {}", f);
                             // This will not send if the channel is at capacity.
                             // Queueing should happen on the AppState side if desired. This will always send the latest value.
                             let _ = senders.encoder_position.1.try_send(measurements::Measurement::new(ctr as f64, f as f64));
@@ -122,7 +120,8 @@ fn serial_listener(senders: SenderBlackboard)
                     
                     if header == senders.dbg_msgs.0 {
                         let s = Parser::parse_string(&data);
-                        senders.dbg_msgs.1.try_send(s);
+                        println!("dbg_msg:{}", s);
+                        let _ = senders.dbg_msgs.1.try_send(s);
                     }
                     
                 }
@@ -152,60 +151,6 @@ impl MeasurementPlot
     }
 }
 
-// pub struct EncoderPositionsPlot
-// {
-//     paused: bool,
-//     pause_cache: MeasurementWindow,
-
-//     show_axis0: bool,
-//     show_axis1: bool,
-//     show_axis2: bool,
-//     show_axis3: bool,
-// }
-
-// impl EncoderPositionsPlot
-// {
-//     fn new(look_behind: usize) -> Self
-//     {
-//         Self
-//         {
-//             paused: false,
-//             pause_cache: MeasurementWindow::new_with_look_behind(look_behind),
-//             show_axis0: true,
-//             show_axis1: true,
-//             show_axis2: true,
-//             show_axis3: true,
-//         }
-//     }
-// }
-
-// pub struct EncoderVelocitiesPlot
-// {
-//     paused: bool,
-//     pause_cache: egui_plot::PlotPoint,
-
-//     show_axis0: bool,
-//     show_axis1: bool,
-//     show_axis2: bool,
-//     show_axis3: bool,
-// }
-
-// impl EncoderVelocitiesPlot
-// {
-//     fn new(look_behind: usize) -> Self
-//     {
-//         Self
-//         {
-//             paused: false,
-//             pause_cache: egui_plot::PlotPoint::new(0.0, 0.0),
-//             show_axis0: true,
-//             show_axis1: true,
-//             show_axis2: true,
-//             show_axis3: true,
-//         }
-//     }
-// }
-
 pub struct AppState
 {
     com_port: String,
@@ -216,6 +161,7 @@ pub struct AppState
     dbg_msgs: VecDeque<String>,
 
     axis_state: Buttons,
+    controller_setpoint: f32,
 }
 
 impl AppState
@@ -231,7 +177,8 @@ impl AppState
             encoder_velocities: MeasurementPlot::new(look_behind),
             dbg_msgs: VecDeque::<String>::new(),
 
-            axis_state: Buttons::First,
+            axis_state: Buttons::PositionCtrl,
+            controller_setpoint: 0.0,
         }
     }
 }
@@ -246,23 +193,13 @@ pub struct MonitorApp {
     receivers: ReceiverBlackboard,
 }
 
-// impl MonitorApp {
-//     fn new(look_behind: usize) -> Self {
-//         Self {
-//             include_y: Vec::new(),
-//             app_state: AppState::new(look_behind),
-
-//             window_size: look_behind,
-//         }
-//     }
-// }
-
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 enum Buttons {
-    First,
-    Second,
-    Third,
+    PositionCtrl,
+    VelocityCtrl,
+    VoltageCtrl,
+    TorqueCtrl
 }
 
 impl eframe::App for MonitorApp {
@@ -401,7 +338,7 @@ impl eframe::App for MonitorApp {
 
             egui::Window::new("Debug Messages")
                 .default_width(debug_msgs_width)
-                .default_height(debug_msgs_height)
+                .default_height(debug_msgs_height*2.0)
                 .collapsible(false)
                 .anchor(Align2::RIGHT_BOTTOM, [0.0,0.0])
                 .show(ctx, |ui: &mut egui::Ui| {
@@ -409,33 +346,62 @@ impl eframe::App for MonitorApp {
                     ui.horizontal(|ui| {
                         if ui.button("ODrv Calibration").clicked() {
                             // self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:calibrate"));
-                            todo!("Calibrate not implemented yet");
+                            // todo!("Calibrate not implemented yet");
+
+                            // This will block. It's important that all msgs are processed. Use blocking send sparingly
+                            let _ = self.receivers.echo_channel.1.send(String::from("calib_rtn"));
                         };
                         if ui.button("ODrv Closed Loop Ctrl").clicked() {
-                            todo!("Calibrate not implemented yet");
+
+                            // todo!("Calibrate not implemented yet");
                             // self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:closed_loop_ctrl"));
+                            if &mut self.app_state.axis_state == &mut Buttons::PositionCtrl{
+                                let _ = self.receivers.echo_channel.1.send(String::from("posn_ctrl"));
+                            } else if  &mut self.app_state.axis_state == &mut Buttons::VelocityCtrl{
+                                let _ = self.receivers.echo_channel.1.send(String::from("velo_ctrl"));
+                            }
+                            else if  &mut self.app_state.axis_state == &mut Buttons::TorqueCtrl{
+                                let _ = self.receivers.echo_channel.1.send(String::from("torq_ctrl"));
+                            }
+                            else if  &mut self.app_state.axis_state == &mut Buttons::VoltageCtrl{
+                                let _ = self.receivers.echo_channel.1.send(String::from("volt_ctrl"));
+                            }
+
+                            let _ = self.receivers.echo_channel.1.send(String::from("ClLp_ctrl"));
                         };
                         if ui.button("ODrv Idle").clicked() {
-                            todo!("Calibrate not implemented yet");
+                            // todo!("Calibrate not implemented yet");
                             // self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:idle_ctrl"));
+                            let _ = self.receivers.echo_channel.1.send(String::from("idle_ctrl"));
                         };
                     });
                     
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::First, "First");
-                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::Second, "Second");
-                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::Third, "Third");
+                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::PositionCtrl, "Position Ctrl");
+                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::VelocityCtrl, "Velocity Ctrl");
+                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::TorqueCtrl, "Torque Ctrl");
+                        ui.selectable_value(&mut self.app_state.axis_state, Buttons::VoltageCtrl, "Voltage Ctrl");
                     });
                     ui.end_row();
 
-                    if &mut self.app_state.axis_state == &mut Buttons::Second{
-                        ui.label("Second");
-                    }
+                    ui.separator();
+
+                    let mut new_setpoint = self.app_state.controller_setpoint;
+                    ui.add(egui::Slider::new(&mut new_setpoint, -10.0..=10.0).text("Controller Setpoint"));
                     
+                    // If value changed, send it to the ODrive
+                    if new_setpoint != self.app_state.controller_setpoint
+                    {
+                        self.app_state.controller_setpoint = new_setpoint;
+                        let MAX_MSG_LEN = 9; // TODO: Make configurable, later
+                        let msg = format!("sp:{:.4}", self.app_state.controller_setpoint)[..MAX_MSG_LEN].to_string();
+                        let _ = self.receivers.echo_channel.1.send(msg);
+                    }
+
                     ui.separator();
                     
                     // Get any new msgs
-                    if let Ok(mut dbg_msg) = self.receivers.dbg_msgs.1.try_recv()
+                    if let Ok(dbg_msg) = self.receivers.dbg_msgs.1.try_recv()
                     {
                         let MAX_LEN = 10; // TODO: Make this configurable in the AppState
                         self.app_state.dbg_msgs.push_back(dbg_msg);
@@ -455,24 +421,30 @@ impl eframe::App for MonitorApp {
 }
 
 // All rows consist of a name and a Sender
-type MeasurementRow = (String, crossbeam_channel::Sender<measurements::Measurement>);
-type MsgRow = (String, crossbeam_channel::Sender<String>);
-struct SenderBlackboard
-{
-    bus_voltage: MeasurementRow,
-    encoder_position: MeasurementRow,
-    encoder_velocity: MeasurementRow,
-    dbg_msgs : MsgRow,
-}
+type MeasurementRowTx = (String, crossbeam_channel::Sender<measurements::Measurement>);
+type MsgRowTx = (String, crossbeam_channel::Sender<String>);
 
 type MeasurementRowRx = (String, crossbeam_channel::Receiver<measurements::Measurement>);
 type MsgRowRx = (String, crossbeam_channel::Receiver<String>);
+
+struct SenderBlackboard
+{
+    bus_voltage: MeasurementRowTx,
+    encoder_position: MeasurementRowTx,
+    encoder_velocity: MeasurementRowTx,
+    dbg_msgs : MsgRowTx,
+
+    echo_channel: MsgRowRx,
+}
+
 struct ReceiverBlackboard
 {
     bus_voltage: MeasurementRowRx,
     encoder_position: MeasurementRowRx,
     encoder_velocity: MeasurementRowRx,
     dbg_msgs : MsgRowRx,
+
+    echo_channel: MsgRowTx,
 }
 
 fn main() {
@@ -483,6 +455,7 @@ fn main() {
     let (encoder_position_s, encoder_position_r) = crossbeam_channel::bounded(sender_queue_capacity);
     let (encoder_velocity_s, encoder_velocity_r) = crossbeam_channel::bounded(sender_queue_capacity);
     let (dbg_msgs_s, dbg_msgs_r) = crossbeam_channel::bounded(sender_queue_capacity);
+    let (echo_channel_s, echo_channel_r) = crossbeam_channel::bounded(sender_queue_capacity);
 
 
     let mut app = MonitorApp {
@@ -493,8 +466,10 @@ fn main() {
         receivers: ReceiverBlackboard{
             bus_voltage: ("bus_voltage".to_string(), bus_voltage_r),
             encoder_position: ("encoder_position".to_string(), encoder_position_r),
-            encoder_velocity: ("encoder_position".to_string(), encoder_velocity_r),
-            dbg_msgs: ("dbg_msgs".to_string(), dbg_msgs_r),
+            encoder_velocity: ("encoder_velocity".to_string(), encoder_velocity_r),
+            dbg_msgs: ("dbg_msg".to_string(), dbg_msgs_r),
+
+            echo_channel: ("echo_channel".to_string(), echo_channel_s),
         },
     };
     
@@ -509,8 +484,9 @@ fn main() {
                 let senders = SenderBlackboard{
                     bus_voltage: ("bus_voltage".to_string(), bus_voltage_s),
                     encoder_position: ("encoder_position".to_string(), encoder_position_s),
-                    encoder_velocity: ("encoder_position".to_string(), encoder_velocity_s),
-                    dbg_msgs: ("dbg_msgs".to_string(), dbg_msgs_s),
+                    encoder_velocity: ("encoder_velocity".to_string(), encoder_velocity_s),
+                    dbg_msgs: ("dbg_msg".to_string(), dbg_msgs_s),
+                    echo_channel: ("echo_channel".to_string(), echo_channel_r),
                 };
 
                 // Inf loop, does not return
