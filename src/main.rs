@@ -386,8 +386,10 @@ impl eframe::App for MonitorApp {
 
                     ui.separator();
 
+                    ui.style_mut().spacing.slider_width = 500.0;
+
                     let mut new_setpoint = self.app_state.controller_setpoint;
-                    ui.add(egui::Slider::new(&mut new_setpoint, -10.0..=10.0).text("Controller Setpoint"));
+                    ui.add(egui::Slider::new(&mut new_setpoint, -2.5..=2.5).text("Controller Setpoint"));
                     
                     // If value changed, send it to the ODrive
                     if new_setpoint != self.app_state.controller_setpoint
