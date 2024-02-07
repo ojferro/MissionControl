@@ -98,22 +98,22 @@ fn serial_listener(senders: SenderBlackboard)
                             ctr = ctr + 1;
                         }
                     }
-                    if header == senders.encoder_position.0 {
+                    if header == senders.encoder0_position.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
-                            // println!("encoder pos: {}", f);
+                            // println!("encoder0 pos: {}", f);
                             // This will not send if the channel is at capacity.
                             // Queueing should happen on the AppState side if desired. This will always send the latest value.
-                            let _ = senders.encoder_position.1.try_send(measurements::Measurement::new(ctr as f64, f as f64));
+                            let _ = senders.encoder0_position.1.try_send(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
-                    if header == senders.encoder_velocity.0 {
+                    if header == senders.encoder0_velocity.0 {
                         if let Ok(f) = Parser::parse_float(&data)
                         {
                             // This will not send if the channel is at capacity.
                             // Queueing should happen on the AppState side if desired. This will always send the latest value.
-                            let _ = senders.encoder_velocity.1.try_send(measurements::Measurement::new(ctr as f64, f as f64));
+                            let _ = senders.encoder0_velocity.1.try_send(measurements::Measurement::new(ctr as f64, f as f64));
                             ctr = ctr + 1;
                         }
                     }
@@ -156,8 +156,8 @@ pub struct AppState
     com_port: String,
 
     bus_voltages: MeasurementPlot,
-    encoder_positions: MeasurementPlot,
-    encoder_velocities: MeasurementPlot,
+    encoder0_positions: MeasurementPlot,
+    encoder0_velocities: MeasurementPlot,
     dbg_msgs: VecDeque<String>,
 
     axis_state: Buttons,
@@ -173,8 +173,8 @@ impl AppState
             com_port: String::from("#"),
 
             bus_voltages: MeasurementPlot::new(look_behind),
-            encoder_positions: MeasurementPlot::new(look_behind),
-            encoder_velocities: MeasurementPlot::new(look_behind),
+            encoder0_positions: MeasurementPlot::new(look_behind),
+            encoder0_velocities: MeasurementPlot::new(look_behind),
             dbg_msgs: VecDeque::<String>::new(),
 
             axis_state: Buttons::PositionCtrl,
@@ -258,7 +258,7 @@ impl eframe::App for MonitorApp {
                 
             });
 
-            egui::Window::new("Encoder Position")
+            egui::Window::new("Encoder Positions")
             .default_width(plot_width)
             .default_height(plot_height)
             .collapsible(false)
@@ -269,31 +269,31 @@ impl eframe::App for MonitorApp {
                 // Checkboxes to select which axes get plotted 
                 ui.horizontal(|ui| {
 
-                    // ui.checkbox(&mut self.app_state.encoder_positions.show_axis0, "Show Axis 0")
+                    // ui.checkbox(&mut self.app_state.encoder0_positions.show_axis0, "Show Axis 0")
                     //     .on_hover_text("Uncheck to hide all the widgets.");
 
                     if ui.button("Pause").on_hover_text("Pause the plot.").clicked() {
-                        self.app_state.encoder_positions.paused = !self.app_state.encoder_positions.paused;
+                        self.app_state.encoder0_positions.paused = !self.app_state.encoder0_positions.paused;
                     };
                 });
                 ui.separator();
 
                 // Encoder positions plots
-                let mut encoder_positions_plot = Plot::new("encoder_position");
+                let mut encoder0_positions_plot = Plot::new("encoder0_position");
                 for y in self.include_y.iter() {
-                    encoder_positions_plot = encoder_positions_plot.include_y(*y);
+                    encoder0_positions_plot = encoder0_positions_plot.include_y(*y);
                 }
                 
                 // Only update the values if not paused
-                if !self.app_state.encoder_positions.paused {
-                    if let Ok(mut encoder_position) = self.receivers.encoder_position.1.try_recv()
+                if !self.app_state.encoder0_positions.paused {
+                    if let Ok(mut encoder0_position) = self.receivers.encoder0_position.1.try_recv()
                     {
-                        self.app_state.encoder_positions.measurements.add(encoder_position);
+                        self.app_state.encoder0_positions.measurements.add(encoder0_position);
                     }
                 }
 
-                encoder_positions_plot.show(ui, |plot_ui| {
-                    plot_ui.line(Line::new(self.app_state.encoder_positions.measurements.plot_values()));
+                encoder0_positions_plot.show(ui, |plot_ui| {
+                    plot_ui.line(Line::new(self.app_state.encoder0_positions.measurements.plot_values()));
                 });
             });
 
@@ -308,31 +308,31 @@ impl eframe::App for MonitorApp {
                     // Checkboxes to select which axes get plotted 
                     ui.horizontal(|ui| {
 
-                        // ui.checkbox(&mut self.app_state.encoder_positions.show_axis0, "Show Axis 0")
+                        // ui.checkbox(&mut self.app_state.encoder0_positions.show_axis0, "Show Axis 0")
                         //     .on_hover_text("Uncheck to hide all the widgets.");
 
                         if ui.button("Pause").on_hover_text("Pause the plot.").clicked() {
-                            self.app_state.encoder_velocities.paused = !self.app_state.encoder_velocities.paused;
+                            self.app_state.encoder0_velocities.paused = !self.app_state.encoder0_velocities.paused;
                         };
                     });
                     ui.separator();
 
                     // Only update if not paused
-                    if !self.app_state.encoder_velocities.paused {
-                        if let Ok(mut encoder_velocity) = self.receivers.encoder_velocity.1.try_recv()
+                    if !self.app_state.encoder0_velocities.paused {
+                        if let Ok(mut encoder0_velocity) = self.receivers.encoder0_velocity.1.try_recv()
                         {
-                            self.app_state.encoder_velocities.measurements.add(encoder_velocity);
+                            self.app_state.encoder0_velocities.measurements.add(encoder0_velocity);
                         }
                     }
 
-                    // Encoder velocities plots
-                    let mut encoder_velocities_plot = Plot::new("encoder_velocities");
+                    // encoder0 velocities plots
+                    let mut encoder0_velocities_plot = Plot::new("encoder0_velocities");
                     for y in self.include_y.iter() {
-                        encoder_velocities_plot = encoder_velocities_plot.include_y(*y);
+                        encoder0_velocities_plot = encoder0_velocities_plot.include_y(*y);
                     }
 
-                    encoder_velocities_plot.show(ui, |plot_ui| {
-                        plot_ui.line(Line::new(self.app_state.encoder_velocities.measurements.plot_values()));
+                    encoder0_velocities_plot.show(ui, |plot_ui| {
+                        plot_ui.line(Line::new(self.app_state.encoder0_velocities.measurements.plot_values()));
                     });
                 });
 
@@ -357,6 +357,7 @@ impl eframe::App for MonitorApp {
                             // self.master_msgs.lock().unwrap().push_back(String::from("dbg_msg:closed_loop_ctrl"));
                             if &mut self.app_state.axis_state == &mut Buttons::PositionCtrl{
                                 let _ = self.receivers.echo_channel.1.send(String::from("posn_ctrl"));
+                                println!("SENDING posn_ctrl");
                             } else if  &mut self.app_state.axis_state == &mut Buttons::VelocityCtrl{
                                 let _ = self.receivers.echo_channel.1.send(String::from("velo_ctrl"));
                             }
@@ -432,8 +433,8 @@ type MsgRowRx = (String, crossbeam_channel::Receiver<String>);
 struct SenderBlackboard
 {
     bus_voltage: MeasurementRowTx,
-    encoder_position: MeasurementRowTx,
-    encoder_velocity: MeasurementRowTx,
+    encoder0_position: MeasurementRowTx,
+    encoder0_velocity: MeasurementRowTx,
     dbg_msgs : MsgRowTx,
 
     echo_channel: MsgRowRx,
@@ -442,8 +443,8 @@ struct SenderBlackboard
 struct ReceiverBlackboard
 {
     bus_voltage: MeasurementRowRx,
-    encoder_position: MeasurementRowRx,
-    encoder_velocity: MeasurementRowRx,
+    encoder0_position: MeasurementRowRx,
+    encoder0_velocity: MeasurementRowRx,
     dbg_msgs : MsgRowRx,
 
     echo_channel: MsgRowTx,
@@ -454,8 +455,8 @@ fn main() {
     let sender_queue_capacity = 2;
 
     let (bus_voltage_s, bus_voltage_r) = crossbeam_channel::bounded(sender_queue_capacity);
-    let (encoder_position_s, encoder_position_r) = crossbeam_channel::bounded(sender_queue_capacity);
-    let (encoder_velocity_s, encoder_velocity_r) = crossbeam_channel::bounded(sender_queue_capacity);
+    let (encoder0_position_s, encoder0_position_r) = crossbeam_channel::bounded(sender_queue_capacity);
+    let (encoder0_velocity_s, encoder0_velocity_r) = crossbeam_channel::bounded(sender_queue_capacity);
     let (dbg_msgs_s, dbg_msgs_r) = crossbeam_channel::bounded(sender_queue_capacity);
     let (echo_channel_s, echo_channel_r) = crossbeam_channel::bounded(sender_queue_capacity);
 
@@ -467,8 +468,8 @@ fn main() {
 
         receivers: ReceiverBlackboard{
             bus_voltage: ("bus_voltage".to_string(), bus_voltage_r),
-            encoder_position: ("encoder_position".to_string(), encoder_position_r),
-            encoder_velocity: ("encoder_velocity".to_string(), encoder_velocity_r),
+            encoder0_position: ("encoder0_position".to_string(), encoder0_position_r),
+            encoder0_velocity: ("encoder0_velocity".to_string(), encoder0_velocity_r),
             dbg_msgs: ("dbg_msg".to_string(), dbg_msgs_r),
 
             echo_channel: ("echo_channel".to_string(), echo_channel_s),
@@ -485,8 +486,8 @@ fn main() {
                 
                 let senders = SenderBlackboard{
                     bus_voltage: ("bus_voltage".to_string(), bus_voltage_s),
-                    encoder_position: ("encoder_position".to_string(), encoder_position_s),
-                    encoder_velocity: ("encoder_velocity".to_string(), encoder_velocity_s),
+                    encoder0_position: ("encoder0_position".to_string(), encoder0_position_s),
+                    encoder0_velocity: ("encoder0_velocity".to_string(), encoder0_velocity_s),
                     dbg_msgs: ("dbg_msg".to_string(), dbg_msgs_s),
                     echo_channel: ("echo_channel".to_string(), echo_channel_r),
                 };
