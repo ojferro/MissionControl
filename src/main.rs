@@ -31,7 +31,11 @@ impl Parser {
 
 fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_msgs_s: crossbeam_channel::Sender<String>) -> Result<(), Box<dyn std::error::Error>>
 {
-    let rec = rerun::RecordingStreamBuilder::new("sensor_stream_viewer").spawn()?;
+    let opts = rerun::SpawnOptions {
+        memory_limit: "10%".into(),
+        ..Default::default()
+    };
+    let rec = rerun::RecordingStreamBuilder::new("sensor_stream_viewer").spawn_opts(&opts, None)?;
 
     let delay_between_rereads = 10; // In millis
     println!("Serial port:");
@@ -50,6 +54,8 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
     // serial_buf may contain less or more than one whole msg (i.e. chars delimited by \n)
     let delimiter = b'\n'; // Change this to the delimiter character(s) you're using
     let delimiter_header = ':'; // Change this to the delimiter character(s) you're using
+
+    let mut quaternion :[f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
     let mut ctr = 0;
     loop {
@@ -82,9 +88,21 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
                             {
                                 rec.set_time_sequence("step", ctr);
                                 let _ = rec.log(
-                                    "bus_voltage",
+                                    "bus/V",
                                     &rerun::TimeSeriesScalar::new(f as f64)
-                                    .with_label("bus_voltage"),
+                                    .with_label("Voltage"),
+                                );
+                                ctr = ctr + 1;
+                            }
+                        },
+                        "bus_current" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                let _ = rec.log(
+                                    "bus/I",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("Current"),
                                 );
                                 ctr = ctr + 1;
                             }
@@ -142,13 +160,240 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
                                 ctr = ctr + 1;
                             }
                         },
+                        // "q_w" => {
+                        //     if let Ok(f) = Parser::parse_float(&data)
+                        //     {
+                        //         rec.set_time_sequence("step", ctr);
+                                
+                        //         quaternion[0] = f;
+
+                        //         rec.log(
+                        //             "simple",
+                        //             &rerun::Boxes3D::from_centers_and_half_sizes(
+                        //                 [(0.0, 0.0, 0.0)],
+                        //                 [(2.0, 2.0, 1.0)],
+                        //             ).with_rotations([rerun::Quaternion::from_xyzw([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])]),
+                        //         )?;
+
+                        //         ctr = ctr + 1;
+                        //     }
+                        // },
+                        // "q_x" => {
+                        //     if let Ok(f) = Parser::parse_float(&data)
+                        //     {
+                        //         rec.set_time_sequence("step", ctr);
+                                
+                        //         quaternion[1] = f;
+
+                        //         rec.log(
+                        //             "simple",
+                        //             &rerun::Boxes3D::from_centers_and_half_sizes(
+                        //                 [(0.0, 0.0, 0.0)],
+                        //                 [(2.0, 2.0, 1.0)],
+                        //             ).with_rotations([rerun::Quaternion::from_xyzw([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])]),
+                        //         )?;
+
+                        //         ctr = ctr + 1;
+                        //     }
+                        // },
+                        // "q_y" => {
+                        //     if let Ok(f) = Parser::parse_float(&data)
+                        //     {
+                        //         rec.set_time_sequence("step", ctr);
+                                
+                        //         quaternion[2] = f;
+
+                        //         rec.log(
+                        //             "simple",
+                        //             &rerun::Boxes3D::from_centers_and_half_sizes(
+                        //                 [(0.0, 0.0, 0.0)],
+                        //                 [(2.0, 2.0, 1.0)],
+                        //             ).with_rotations([rerun::Quaternion::from_xyzw([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])]),
+                        //         )?;
+
+                        //         ctr = ctr + 1;
+                        //     }
+                        // },
+                        // "q_z" => {
+                        //     if let Ok(f) = Parser::parse_float(&data)
+                        //     {
+                        //         rec.set_time_sequence("step", ctr);
+                                
+                        //         quaternion[3] = f;
+
+                        //         rec.log(
+                        //             "simple",
+                        //             &rerun::Boxes3D::from_centers_and_half_sizes(
+                        //                 [(0.0, 0.0, 0.0)],
+                        //                 [(2.0, 2.0, 1.0)],
+                        //             ).with_rotations([rerun::Quaternion::from_xyzw([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])]),
+                        //         )?;
+
+                        //         ctr = ctr + 1;
+                        //     }
+                        // },
+
+                        "imu_r" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                
+                                let _ = rec.log(
+                                    "imu/roll",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("imu_roll"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
+                        "imu_p" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                
+                                let _ = rec.log(
+                                    "imu/pitch",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("imu_pitch"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
+                        "imu_y" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+
+                                let _ = rec.log(
+                                    "imu/yaw",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("imu_yaw"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
+
+                        "acc_x" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                let _ = rec.log(
+                                    "accelerometer/X",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("acc_X"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
+                        "acc_y" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                let _ = rec.log(
+                                    "accelerometer/Y",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("acc_Y"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
+                        "acc_z" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                let _ = rec.log(
+                                    "accelerometer/Z",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("acc_Z"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
+                        "gyr_x" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                let _ = rec.log(
+                                    "gyro/X",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("gyro_X"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
+                        "gyr_y" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                let _ = rec.log(
+                                    "gyro/Y",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("gyro_Y"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
+                        "gyr_z" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                rec.set_time_sequence("step", ctr);
+                                let _ = rec.log(
+                                    "gyro/Z",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("gyro_Z"),
+                                );
+
+                                ctr = ctr + 1;
+                            }
+                        },
                         "dbg_msg" => {
                             let s = Parser::parse_string(&data);
                             println!("dbg_msg:{}", s);
 
+                            // Hacky way to publish an array as a whole
+                            if s.contains("quaternion,")
+                            {
+                                // Split the input string by ','
+                                let parts: Vec<&str> = s.split(',').collect();
+
+                                // Extract the string and floats
+                                // let key = parts[0];
+                                let floats: Vec<f32> = parts[1..].iter().filter_map(|&s| s.parse().ok()).collect();
+
+                                // println!("s: {}", s);
+                                // println!("parts: {:?}", parts);
+                                // println!("floats: {:?}", floats.len());
+                                quaternion[0] = floats[0];
+                                quaternion[1] = floats[1];
+                                quaternion[2] = floats[2];
+                                quaternion[3] = floats[3];
+
+                                // Publish to rerun
+                                rec.log(
+                                    "IMU_3D",
+                                    &rerun::Boxes3D::from_centers_and_half_sizes(
+                                        [(0.0, 0.0, 0.0)],
+                                        [(1.0, 2.0, 2.0)],
+                                    ).with_rotations([rerun::Quaternion::from_xyzw([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])]),
+                                )?;
+
+                            }
+
                             let _ = dbg_msgs_s.try_send(s);
                         },
-                        _ => { println!("No match on serial!"); /* else case is no-op */ },
+                        _ => {
+                            let s = Parser::parse_string(&data);
+                            println!("No match on serial! {}", s);
+                            /* else case is no-op */
+                        },
                     }
                     
                 }
