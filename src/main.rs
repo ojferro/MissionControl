@@ -107,54 +107,54 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
                                 ctr = ctr + 1;
                             }
                         },
-                        "encoder_position_0" => {
+                        "enc_pos_0" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
                                 rec.set_time_sequence("step", ctr);
 
                                 let _ = rec.log(
-                                    "encoder_positions/R",
+                                    "encoder_positions/0",
                                     &rerun::TimeSeriesScalar::new(f as f64)
-                                    .with_label("R_position"),
+                                    .with_label("Axis 0 position"),
                                 );
 
                                 ctr = ctr + 1;
                             }
                         },
-                        "encoder_velocity_0" => {
+                        "enc_vel_0" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
                                 rec.set_time_sequence("step", ctr);
                                 let _ = rec.log(
-                                    "encoder_velocities/R",
+                                    "encoder_velocities/0",
                                     &rerun::TimeSeriesScalar::new(f as f64)
-                                    .with_label("R_velocity"),
+                                    .with_label("Axis 0 velocity"),
                                 );
 
                                 ctr = ctr + 1;
                             }
                         },
-                        "encoder_position_1" => {
+                        "enc_pos_1" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
                                 rec.set_time_sequence("step", ctr);
                                 let _ = rec.log(
-                                    "encoder_positions/L",
+                                    "encoder_positions/1",
                                     &rerun::TimeSeriesScalar::new(f as f64)
-                                    .with_label("L_position"),
+                                    .with_label("Axis 1 position"),
                                 );
 
                                 ctr = ctr + 1;
                             }
                         },
-                        "encoder_velocity_1" => {
+                        "enc_vel_1" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
                                 rec.set_time_sequence("step", ctr);
                                 let _ = rec.log(
-                                    "encoder_velocities/L",
+                                    "encoder_velocities/1",
                                     &rerun::TimeSeriesScalar::new(f as f64)
-                                    .with_label("L_velocity"),
+                                    .with_label("Axis 1 velocity"),
                                 );
 
                                 ctr = ctr + 1;
@@ -432,6 +432,13 @@ impl eframe::App for CommandDispatcherApp {
             .show(ctx, |ui: &mut egui::Ui| {
                 
                 ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.control_mode, ControlModes::PositionCtrl, "Position Ctrl");
+                    ui.selectable_value(&mut self.control_mode, ControlModes::VelocityCtrl, "Velocity Ctrl");
+                    ui.selectable_value(&mut self.control_mode, ControlModes::TorqueCtrl, "Torque Ctrl");
+                    ui.selectable_value(&mut self.control_mode, ControlModes::VoltageCtrl, "Voltage Ctrl");
+                });
+
+                ui.horizontal(|ui| {
                     if ui.button("Calibration Rtn").clicked() {
                         let _ = self.dispatch_command_s.try_send(String::from("calib_rtn"));
                     };
@@ -460,13 +467,6 @@ impl eframe::App for CommandDispatcherApp {
                     if ui.button("Idle").clicked() {
                         let _ = self.dispatch_command_s.try_send(String::from("idle_ctrl"));
                     };
-                });
-                
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.control_mode, ControlModes::PositionCtrl, "Position Ctrl");
-                    ui.selectable_value(&mut self.control_mode, ControlModes::VelocityCtrl, "Velocity Ctrl");
-                    ui.selectable_value(&mut self.control_mode, ControlModes::TorqueCtrl, "Torque Ctrl");
-                    ui.selectable_value(&mut self.control_mode, ControlModes::VoltageCtrl, "Voltage Ctrl");
                 });
 
                 ui.end_row();
