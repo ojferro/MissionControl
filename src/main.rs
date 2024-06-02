@@ -1,5 +1,5 @@
 use rerun;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::io;
 use std::collections::VecDeque;
 use std::thread;
@@ -57,7 +57,9 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
 
     let mut quaternion :[f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
-    let mut ctr = 0;
+    // To measure time offset for the rerun timeline
+    let start_time = SystemTime::now();
+
     loop {
         let mut read_buf: [u8; 256] = [0; 256];
 
@@ -86,78 +88,141 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
                         "bus_voltage" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "bus/V",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("Voltage"),
                                 );
-                                ctr = ctr + 1;
                             }
                         },
                         "bus_current" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "bus/I",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("Current"),
                                 );
-                                ctr = ctr + 1;
                             }
                         },
                         "enc_pos_0" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
 
                                 let _ = rec.log(
                                     "encoder_positions/0",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("Axis 0 position"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "enc_vel_0" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "encoder_velocities/0",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("Axis 0 velocity"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "enc_pos_1" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "encoder_positions/1",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("Axis 1 position"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "enc_vel_1" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "encoder_velocities/1",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("Axis 1 velocity"),
                                 );
-
-                                ctr = ctr + 1;
+                            }
+                        },
+                        "ctrl_u_0" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+                                
+                                let _ = rec.log(
+                                    "ctrl_u/0",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("Axis 0 Control U"),
+                                );
                             }
                         },
                         // "q_w" => {
@@ -236,122 +301,182 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
                         "imu_r" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
                                 
                                 let _ = rec.log(
                                     "imu/roll",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("imu_roll"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "imu_p" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
                                 
                                 let _ = rec.log(
                                     "imu/pitch",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("imu_pitch"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "imu_y" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
 
                                 let _ = rec.log(
                                     "imu/yaw",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("imu_yaw"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
 
                         "acc_x" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "accelerometer/X",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("acc_X"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "acc_y" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "accelerometer/Y",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("acc_Y"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "acc_z" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "accelerometer/Z",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("acc_Z"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "gyr_x" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+
                                 let _ = rec.log(
                                     "gyro/X",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("gyro_X"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "gyr_y" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+                                
                                 let _ = rec.log(
                                     "gyro/Y",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("gyro_Y"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "gyr_z" => {
                             if let Ok(f) = Parser::parse_float(&data)
                             {
-                                rec.set_time_sequence("step", ctr);
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+                                
                                 let _ = rec.log(
                                     "gyro/Z",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("gyro_Z"),
                                 );
-
-                                ctr = ctr + 1;
                             }
                         },
                         "dbg_msg" => {
@@ -466,6 +591,9 @@ impl eframe::App for CommandDispatcherApp {
                     };
                     if ui.button("Idle").clicked() {
                         let _ = self.dispatch_command_s.try_send(String::from("idle_ctrl"));
+                    };
+                    if ui.button("Start Auto Control").clicked() {
+                        let _ = self.dispatch_command_s.try_send(String::from("auto_ctrl"));
                     };
                 });
 
