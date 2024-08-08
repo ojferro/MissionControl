@@ -297,6 +297,87 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
                         //         ctr = ctr + 1;
                         //     }
                         // },
+                        "x" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+                                
+                                let _ = rec.log(
+                                    "state/x",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("state_x"),
+                                );
+                            }
+                        },
+                        "theta" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+                                
+                                let _ = rec.log(
+                                    "state/theta",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("state_theta"),
+                                );
+                            }
+                        },
+                        "x_dot" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+                                
+                                let _ = rec.log(
+                                    "state/x_dot",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("state_x_dot"),
+                                );
+                            }
+                        },
+                        "theta_dot" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+                                
+                                let _ = rec.log(
+                                    "state/theta_dot",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("state_theta_dot"),
+                                );
+                            }
+                        },
+
 
                         "imu_r" => {
                             if let Ok(f) = Parser::parse_float(&data)
@@ -335,6 +416,26 @@ fn serial_listener(cmds_to_dispatch_r: crossbeam_channel::Receiver<String>, dbg_
                                     "imu/pitch",
                                     &rerun::TimeSeriesScalar::new(f as f64)
                                     .with_label("imu_pitch"),
+                                );
+                            }
+                        },
+                        "imu_p_dot" => {
+                            if let Ok(f) = Parser::parse_float(&data)
+                            {
+                                match start_time.elapsed() {
+                                    Ok(elapsed) => {
+                                        rec.set_time_seconds("step", elapsed.as_secs_f32());
+                                    }
+                                    Err(e) => {
+                                        println!("Could not calculate time offset: {e:?}");
+                                        continue;
+                                    }
+                                }
+                                
+                                let _ = rec.log(
+                                    "imu/pitch_dot",
+                                    &rerun::TimeSeriesScalar::new(f as f64)
+                                    .with_label("imu_pitch_dot"),
                                 );
                             }
                         },
@@ -556,12 +657,13 @@ impl eframe::App for CommandDispatcherApp {
         egui::CentralPanel::default()
             .show(ctx, |ui: &mut egui::Ui| {
                 
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.control_mode, ControlModes::PositionCtrl, "Position Ctrl");
-                    ui.selectable_value(&mut self.control_mode, ControlModes::VelocityCtrl, "Velocity Ctrl");
-                    ui.selectable_value(&mut self.control_mode, ControlModes::TorqueCtrl, "Torque Ctrl");
-                    ui.selectable_value(&mut self.control_mode, ControlModes::VoltageCtrl, "Voltage Ctrl");
-                });
+                // ui.horizontal(|ui| {
+                //     ui.selectable_value(&mut self.control_mode, ControlModes::PositionCtrl, "Position Ctrl");
+                //     ui.selectable_value(&mut self.control_mode, ControlModes::VelocityCtrl, "Velocity Ctrl");
+                //     ui.selectable_value(&mut self.control_mode, ControlModes::TorqueCtrl, "Torque Ctrl");
+                //     ui.selectable_value(&mut self.control_mode, ControlModes::VoltageCtrl, "Voltage Ctrl");
+                // });
+
 
                 ui.horizontal(|ui| {
                     if ui.button("Calibration Rtn").clicked() {
@@ -570,25 +672,38 @@ impl eframe::App for CommandDispatcherApp {
                     if ui.button("Clear Errors").clicked() {
                         let _ = self.dispatch_command_s.try_send(String::from("clear_err"));
                     };
-                    if ui.button("Closed Loop Ctrl").clicked() {
+                });
 
-                        match self.control_mode {
-                            ControlModes::PositionCtrl => {
-                                let _ = self.dispatch_command_s.try_send(String::from("posn_ctrl"));
-                            },
-                            ControlModes::VelocityCtrl => {
-                                let _ = self.dispatch_command_s.try_send(String::from("velo_ctrl"));
-                            },
-                            ControlModes::VoltageCtrl => {
-                                let _ = self.dispatch_command_s.try_send(String::from("volt_ctrl"));
-                            },
-                            ControlModes::TorqueCtrl => {
-                                let _ = self.dispatch_command_s.try_send(String::from("torq_ctrl"));
-                            },
-                        }
+                ui.end_row();
+                ui.separator();
 
-                        let _ = self.dispatch_command_s.try_send(String::from("ClLp_ctrl"));
+                ui.horizontal(|ui| {
+                    if ui.button("Position Ctrl").clicked() {
+
+                        self.control_mode = ControlModes::PositionCtrl;
+                        let _ = self.dispatch_command_s.try_send(String::from("posn_ctrl"));
                     };
+                    if ui.button("Velocity Ctrl").clicked() {
+
+                        self.control_mode = ControlModes::VelocityCtrl;
+                        let _ = self.dispatch_command_s.try_send(String::from("velo_ctrl"));
+                    };
+                    if ui.button("Torque Ctrl").clicked() {
+
+                        self.control_mode = ControlModes::TorqueCtrl;
+                        let _ = self.dispatch_command_s.try_send(String::from("torq_ctrl"));
+                    };
+                    if ui.button("Voltage Ctrl").clicked() {
+
+                        self.control_mode = ControlModes::VoltageCtrl;
+                        let _ = self.dispatch_command_s.try_send(String::from("volt_ctrl"));
+                    };
+                });
+
+                ui.end_row();
+                ui.separator();
+
+                ui.horizontal(|ui| {
                     if ui.button("Idle").clicked() {
                         let _ = self.dispatch_command_s.try_send(String::from("idle_ctrl"));
                     };
